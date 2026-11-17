@@ -500,16 +500,9 @@ fn compute_estimate_mb(
 }
 
 
-/// Print the startup banner.
+/// Print the startup line: one line, so a log viewer that timestamps each line (CloudWatch) shows it whole.
 pub fn print_banner(version: &str) {
-    let art = cyan(r#"
-  ___ ___ _    ___ _  _ ___
- / __| __| |  | _ \ || |_ _|
- \__ \ _|| |__|  _/ __ || |
- |___/___|____|_| |_||_|___|"#);
-    let tag = format!("      {} {} {}",
-        dim(&format!("v{version}")), '\u{1F980}', green("SelfDecode\u{2122}"));
-    write_log(&format!("{art}\n{tag}\n"));
+    write_log(&format!("  {} {}", cyan(&format!("Selphi {version}")), dim("(SelfDecode)")));
 }
 
 /// Write a message to both stderr and the log file.
