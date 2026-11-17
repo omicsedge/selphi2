@@ -35,7 +35,7 @@ HG004*
 /examples/presign_panel.sh
 /examples/panel_urls.txt
 
-# Manuscript: kept local only until submission (private history: /data/projects/selphi_paper_private.git)
+# Manuscript: kept local only until submission
 /paper/*.md
 /paper/*.docx
 /paper/*.py

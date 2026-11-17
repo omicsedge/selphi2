@@ -41,8 +41,8 @@ Rust and needs no other tools at run time. It takes three kinds of input:
 Requires Rust 1.89 or newer and a C compiler (gcc or clang).
 
 ```bash
-git clone -b new_version/selphi2_cluster https://github.com/omicsedge/selphi.git   # master holds Selphi 1
-cd selphi
+git clone https://github.com/omicsedge/selphi2.git
+cd selphi2
 cargo build --release              # binary: target/release/selphi
 cargo install --path .             # optional: put selphi on the PATH
 ```

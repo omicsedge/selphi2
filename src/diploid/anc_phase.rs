@@ -26,7 +26,7 @@
 //! of a phase error there; changes never cross. The first segment keeps the
 //! input's orientation.
 //!
-//! Measured (research prototype, /data/tmp/admix2026): on the v3 panel it left 54
+//! Measured (research prototype): on the v3 panel it left 54
 //! real 1000 Genomes trio children, 60 same-population and 66 within-continent
 //! synthetic F1s unchanged in switch error (exact counts, three seeds), and cut
 //! the >= 1 Mb inversions of cross-continental F1s by ~88% with switch error
