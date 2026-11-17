@@ -37,7 +37,7 @@ pub fn merge_batch_parquets(
     let file = std::fs::File::create(&final_path)?;
     let props = WriterProperties::builder()
         .set_compression(Compression::ZSTD(Default::default()))
-        .set_max_row_group_size(1024)
+        .set_max_row_group_row_count(Some(1024))
         .build();
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
         .map_err(|e| std::io::Error::other(e.to_string()))?;

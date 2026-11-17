@@ -69,7 +69,7 @@ pub fn setup_parquet_batch_writers(
         let file = std::fs::File::create(&path)?;
         let props = WriterProperties::builder()
             .set_compression(Compression::ZSTD(Default::default()))
-            .set_max_row_group_size(1024)
+            .set_max_row_group_row_count(Some(1024))
             .build();
         let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
             .map_err(|e| std::io::Error::other(e.to_string()))?;
