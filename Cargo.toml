@@ -36,8 +36,8 @@ rand = { version = "0.8", features = ["small_rng"] }
 rand_mt = "4"
 num_cpus = "1"
 tempfile = "3"
-arrow = { version = "54", features = ["prettyprint"] }
-parquet = { version = "54", features = ["zstd", "snap"] }
+arrow = { version = "60", features = ["prettyprint"] }
+parquet = { version = "60", features = ["zstd", "snap"] }
 memmap2 = "0.9"
 lz4_flex = "0.11"
 memchr = "2"

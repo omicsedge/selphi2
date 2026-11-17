@@ -49,7 +49,7 @@ pub fn setup_parquet_writer(
 
     let props = WriterProperties::builder()
         .set_compression(Compression::ZSTD(Default::default()))
-        .set_max_row_group_size(1024)
+        .set_max_row_group_row_count(Some(1024))
         .build();
 
     let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))

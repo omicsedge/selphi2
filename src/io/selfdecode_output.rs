@@ -134,7 +134,7 @@ impl SampleBuffer {
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
             .set_dictionary_enabled(true)
-            .set_max_row_group_size(CHUNK_SIZE)
+            .set_max_row_group_row_count(Some(CHUNK_SIZE))
             .build();
 
         let mut writer = ArrowWriter::try_new(&mut buf, schema.clone(), Some(props))
