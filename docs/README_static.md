@@ -124,13 +124,7 @@ Script started on 2026-11-10 16:21:34+00:00 [COMMAND="selphi --refpanel chr22.sr
 [selphi] SIMD: AVX-512F+DQ
   auto-route: sniff GT=true PL=false GQ=false DP=false call-rate=1.000 (of 1602000 GT entries) density=262/Mb (thr 1000) settled PL 0/0 (variant records 0/0, blocks 0) [0.0s | 108 MB]
   auto-route: confident hard calls (GT-only, or GQ/DP below WGS density) → genotype engine (no refine) [0.0s | 108 MB]
-
-  ___ ___ _    ___ _  _ ___
- / __| __| |  | _ \ || |_ _|
- \__ \ _|| |__|  _/ __ || |
- |___/___|____|_| |_||_|___|
-      v2.0.0 🦀 SelfDecode™
-
+  Selphi 2.0.0 (SelfDecode)
   input:    chip.vcf.gz
   refpanel: chr22.srp2
   map:      chr22.map
@@ -207,13 +201,7 @@ Script started on 2026-11-04 07:57:57+00:00 [COMMAND="selphi --refpanel chr22.sr
 [selphi] SIMD: AVX-512F+DQ
   auto-route: sniff GT=true PL=false GQ=false DP=false call-rate=1.000 (of 108000 GT entries) density=26022/Mb (thr 1000) settled PL 0/0 (variant records 0/0, blocks 0) [0.0s | 627 MB]
   auto-route: confident hard calls (GT-only, or GQ/DP below WGS density) → genotype engine (no refine) [0.0s | 627 MB]
-
-  ___ ___ _    ___ _  _ ___
- / __| __| |  | _ \ || |_ _|
- \__ \ _|| |__|  _/ __ || |
- |___/___|____|_| |_||_|___|
-      v2.0.0 🦀 SelfDecode™
-
+  Selphi 2.0.0 (SelfDecode)
   input:    wgs.vcf.gz
   refpanel: chr22.srp2
   map:      chr22.map
@@ -250,13 +238,7 @@ $ selphi --refpanel chr22.srp2 --bam HG002.bam --reference GRCh38.fa \
 Script started on 2026-11-04 07:59:04+00:00 [COMMAND="selphi --refpanel chr22.srp2 --bam HG002.bam --reference GRCh38.fa --map chr22.map --out lowcov --threads 16 " <not executed on terminal>]
 [selphi] SIMD: AVX-512F+DQ
   auto-route: aligned reads (BAM/CRAM) → lcWGS engine [0.0s | 43 MB]
-
-  ___ ___ _    ___ _  _ ___
- / __| __| |  | _ \ || |_ _|
- \__ \ _|| |__|  _/ __ || |
- |___/___|____|_| |_||_|___|
-      v2.0.0 🦀 SelfDecode™
-
+  Selphi 2.0.0 (SelfDecode)
   mode:     lcwgs
   input:    HG002.bam
   refpanel: chr22.srp2
