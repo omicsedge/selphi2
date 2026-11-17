@@ -38,7 +38,8 @@ pub fn merge_batch_sds(batch_paths: &[PathBuf], output_path: &Path) -> std::io::
         for i in 0..n {
             let mut entry = za.by_index(i)
                 .map_err(|e| std::io::Error::other(format!("zip entry {i}: {e}")))?;
-            let name = entry.name().to_string();
+            let name = entry.name()
+                .map_err(|e| std::io::Error::other(format!("zip entry {i} name: {e}")))?.into_owned();
             buf.clear();
             entry.read_to_end(&mut buf)?;
             zw.start_file(&name, options)
