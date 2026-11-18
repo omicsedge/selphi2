@@ -337,7 +337,7 @@ fn load_maps(
                 }
             }
             if !found {
-                selphi_info!("  WARNING: no map found for chr{} in {}", key, dir);
+                selphi_info!("  WARNING: no map found for {} in {}", selphi::common::utils::chr_label(key), dir);
             }
         }
         selphi_info!("  maps: {} chromosomes loaded from {}", combined.len(), dir);
@@ -746,11 +746,11 @@ pub fn run_multi_chr(
         if formats.bcf {
             selphi::io::pipeline::setup_bcf_writer(
                 n_samples, &sample_names, all_contig_fields, version, &out_file, config.no_ap, config.gp, &config.header_lines,
-            ).expect("Failed to setup BCF writer")
+            ).unwrap_or_else(|e| { selphi_error!("Failed to setup BCF writer: {}", e); std::process::exit(1) })
         } else {
             selphi::io::pipeline::setup_vcf_writer(
                 &sample_names, all_contig_fields, version, &out_file, config.no_ap, config.gp, &config.header_lines,
-            ).expect("Failed to setup VCF writer")
+            ).unwrap_or_else(|e| { selphi_error!("Failed to setup VCF writer: {}", e); std::process::exit(1) })
         }
     } else {
         let (tx, _rx) = selphi::io::pipeline::output_queue(1);
@@ -795,7 +795,7 @@ pub fn run_multi_chr(
     let mut called_samples = vec![false; n_samples];
     for (chr_idx, chr_name) in chromosomes.iter().enumerate() {
         let chr_start = Instant::now();
-        selphi_info!("  [{}/{}] chr{}", chr_idx + 1, n_chr, chr_name);
+        selphi_info!("  [{}/{}] {}", chr_idx + 1, n_chr, selphi::common::utils::chr_label(chr_name));
 
         // Use prefetched data if available, otherwise load synchronously
         let (srp, wgs_idx, target_idx, mut targ_alleles, raw_chip_cm, chip_bps, n_ref, n_ref_variants, n_chip, nocall, transforms, (matched_idx, uncalled_typed, filled_typed)) =

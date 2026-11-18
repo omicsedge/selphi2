@@ -376,6 +376,7 @@ pub fn pileup_bams(
     let mut blocks: Vec<Vec<f32>> = Vec::with_capacity(n_samples);
     let mut depth = depth_at.map(|d| vec![0u16; d.len() * n_samples]);
     let mut linkage = Vec::new();
+    let mut total = PileupReport::default();
     for (s, r) in per_sample.into_iter().enumerate() {
         let (id, blk, rep, dc, link) = r?;
         if let (Some(all), Some(dc)) = (depth.as_mut(), dc) {
@@ -383,12 +384,21 @@ pub fn pileup_bams(
         }
         if let Some(l) = link { linkage.push(l); }
         if baq_ctx.is_some() {
-            crate::selphi_step!("lcWGS-BAM: {}: {} reads, {} triggering sites, {} realigned ({:.1}%), {} BAQ no-ops",
+            let line = format!("lcWGS-BAM: {}: {} reads, {} triggering sites, {} realigned ({:.1}%), {} BAQ no-ops",
                 id, rep.n_reads, rep.n_trigger_sites, rep.n_realigned,
                 100.0 * rep.n_realigned as f64 / rep.n_reads.max(1) as f64, rep.n_baq_noop);
+            if n_samples == 1 { crate::selphi_step!("{}", line); } else { crate::selphi_debug!("  {}", line); }
+            total.n_reads += rep.n_reads;
+            total.n_realigned += rep.n_realigned;
+            total.n_baq_noop += rep.n_baq_noop;
         }
         sample_ids.push(id);
         blocks.push(blk);
+    }
+    if baq_ctx.is_some() && n_samples > 1 {
+        crate::selphi_step!("lcWGS-BAM: {} samples: {} reads, {} realigned ({:.1}%), {} BAQ no-ops (per sample with --debug)",
+            n_samples, crate::log::fmt_thousands(total.n_reads), crate::log::fmt_thousands(total.n_realigned),
+            100.0 * total.n_realigned as f64 / total.n_reads.max(1) as f64, total.n_baq_noop);
     }
 
     // Assemble interleaved gl3[v*ns*3 + 3s + g].

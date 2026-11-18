@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use selphi::{selphi_info, selphi_step};
+use selphi::{selphi_error, selphi_info, selphi_step};
 
 use crate::cli::Args;
 use selphi::eval::accuracy::{DsScale, EvaluationOptions, InputDosageOptions};
@@ -103,7 +103,7 @@ pub fn evaluate(req: &EvalRequest, output_path: &str, final_path: &Path) {
     selphi_step!("Evaluating accuracy vs truth...");
     print_dosage_options(&req.dosage_options);
     let (_imp, _truth, shared) = selphi::eval::accuracy::find_shared_samples(final_path, truth_path)
-        .expect("Failed to read sample headers");
+        .unwrap_or_else(|e| { selphi_error!("Failed to read sample headers: {}", e); std::process::exit(1) });
     selphi_info!("  imputed:  {}", final_path.display());
     selphi_info!("  truth:    {}", req.truth);
     selphi_info!("  shared:   {} samples", shared.len());
@@ -123,7 +123,7 @@ pub fn evaluate(req: &EvalRequest, output_path: &str, final_path: &Path) {
     let exclude = selphi::eval::exclude::SiteExclusion::build(
         req.exclude_sites.as_deref().map(Path::new),
         req.exclude_panel_monomorphic.as_deref().map(Path::new),
-    ).expect("Failed to build the site exclusion set");
+    ).unwrap_or_else(|e| { selphi_error!("Failed to build the site exclusion set: {}", e); std::process::exit(1) });
     if homref {
         selphi_info!("  homref:   absent→hom-ref (truth is variant-only)");
         let raw_path = req.truth_raw.as_deref().map(Path::new);
@@ -135,7 +135,7 @@ pub fn evaluate(req: &EvalRequest, output_path: &str, final_path: &Path) {
         selphi::eval::accuracy::print_maf_bins(&site);
         selphi::eval::accuracy::print_raw_truth_diag(&rawdiag);
         selphi::eval::accuracy::write_imputation_json(&json_path, &comb, &snp, &indel, req.by_type, &counts, Some(&shared), Some(&site), Some(&rawdiag))
-            .expect("Failed to write JSON summary");
+            .unwrap_or_else(|e| { selphi_error!("Failed to write JSON summary: {}", e); std::process::exit(1) });
     } else {
         if req.truth_raw.is_some() {
             selphi_info!("  WARNING: --truth-raw is only used on the absent→hom-ref path; \
@@ -146,7 +146,7 @@ pass --homref-absent on to apply it (matched-sites scoring ignores it)");
         ));
         selphi::eval::accuracy::print_summary(&site_acc, &sample_acc, &counts);
         selphi::eval::accuracy::write_json_summary(&json_path, &site_acc, &sample_acc, &counts, Some(&shared))
-            .expect("Failed to write JSON summary");
+            .unwrap_or_else(|e| { selphi_error!("Failed to write JSON summary: {}", e); std::process::exit(1) });
     }
     selphi_step!("Accuracy: {}", json_path.display());
 }

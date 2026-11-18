@@ -1177,18 +1177,43 @@ fn run_lcwgs_bam_inner(
     });
     let depth = depth_span.zip(bamgl.depth).map(|(r, count)| ReadDepth::new(r.start, n_samples, count));
     // Read-pair fragments, per sample, unless its median depth is above the gate.
-    let links = link_cfg.filter(|_| bamgl.linkage.len() == n_samples).map(|cfg| Links {
-        cfg,
-        samples: bamgl.linkage.into_iter().zip(&bamgl.sample_ids).map(|(l, id)| {
+    let links = link_cfg.filter(|_| bamgl.linkage.len() == n_samples).map(|cfg| {
+        let (mut frags, mut depths, mut gated) = (Vec::new(), Vec::new(), 0usize);
+        let samples = bamgl.linkage.into_iter().zip(&bamgl.sample_ids).map(|(l, id)| {
             let on = l.median_depth as usize <= cfg.max_depth;
-            crate::selphi_info!("  lcWGS read-pair linkage: {}: {} read pairs over >= 2 SNP sites, median depth {}{}",
+            let line = format!("  lcWGS read-pair linkage: {}: {} read pairs over >= 2 SNP sites, median depth {}{}",
                 id, l.n_frag(), l.median_depth, if on { "" } else { ": above the gate, not linked" });
+            if n_samples == 1 { crate::selphi_info!("{}", line); } else { crate::selphi_debug!("{}", line); }
+            frags.push(l.n_frag());
+            depths.push(l.median_depth);
+            gated += usize::from(!on);
             on.then_some(l)
-        }).collect(),
+        }).collect();
+        if n_samples > 1 { log_linkage_summary(&mut frags, &depths, gated); }
+        Links { cfg, samples }
     });
     // bamgl.gl3 is already in panel-shared order → shared imputation tail.
     let out = impute_from_gl3(srp, &wgs_idx, bamgl.gl3, n_samples, bamgl.sample_ids, &[], map_path, params, prepared, passengers, links)?;
     Ok((out, depth))
+}
+
+/// Median of sorted counts; an even count takes the mean of the two middle values (rounded).
+fn median(sorted: &[usize]) -> usize {
+    let n = sorted.len();
+    if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2]).div_ceil(2) }
+}
+
+/// One line for a cohort's read-pair linkage: the range and median of read pairs over >= 2 SNP sites
+/// and the range of median depths (per sample with --debug).
+fn log_linkage_summary(frags: &mut [usize], depths: &[u32], gated: usize) {
+    frags.sort_unstable();
+    let (Some(&lo), Some(&hi)) = (frags.first(), frags.last()) else { return };
+    let (Some(&dlo), Some(&dhi)) = (depths.iter().min(), depths.iter().max()) else { return };
+    let fmt = |v: usize| crate::log::fmt_thousands(v as u64);
+    let depth = if dlo == dhi { format!("{dlo}") } else { format!("{dlo}-{dhi}") };
+    crate::selphi_info!("  lcWGS read-pair linkage: {} samples, {}-{} read pairs over >= 2 SNP sites (median {}), median depth {}{} (per sample with --debug)",
+        frags.len(), fmt(lo), fmt(hi), fmt(median(frags)), depth,
+        if gated > 0 { format!("; {gated} above the depth gate, not linked") } else { String::new() });
 }
 
 /// How the `--bam` path treats the panel's indel sites.
@@ -2519,5 +2544,15 @@ mod tests {
             assert!(!d.is_nan(), "dose {} at v={} is NaN", d, v);
             assert!((0.0..=2.0).contains(&d), "dose {} at v={} out of range", d, v);
         }
+    }
+}
+
+#[cfg(test)]
+mod linkage_summary_tests {
+    #[test]
+    fn median_of_even_and_odd_counts() {
+        assert_eq!(super::median(&[10, 90]), 50);
+        assert_eq!(super::median(&[1, 2, 9]), 2);
+        assert_eq!(super::median(&[7]), 7);
     }
 }

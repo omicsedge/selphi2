@@ -97,7 +97,7 @@ pub fn build_multi_chr_srp(
     let mut chr_entries: Vec<ChrDirectoryEntry> = Vec::with_capacity(n_chromosomes);
 
     for (chr_idx, (chr_name, contig_csi)) in contig_order.iter().enumerate() {
-        selphi_step!("[{}/{}] Processing chr{}...", chr_idx + 1, n_chromosomes, chr_name);
+        selphi_step!("[{}/{}] Processing {}...", chr_idx + 1, n_chromosomes, crate::common::utils::chr_label(chr_name));
 
         let chr_data_offset = w.stream_position()?;
 
@@ -408,7 +408,7 @@ pub fn merge_samples_single_chr(
         let rc = r.chromosome();
         if rc != chr {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Chromosome mismatch: file 0 has chr{}, file {} has chr{}", chr, i, rc)));
+                format!("Chromosome mismatch: file 0 has {}, file {} has {}", crate::common::utils::chr_label(&chr), i, crate::common::utils::chr_label(&rc))));
         }
     }
 
@@ -702,7 +702,7 @@ pub fn build_multi_chr_srp_from_dir(
     }
 
     selphi_info!("  Found {} per-chr files: {}", bcf_files.len(),
-        bcf_files.iter().map(|(c, _)| format!("chr{}", c)).collect::<Vec<_>>().join(", "));
+        bcf_files.iter().map(|(c, _)| crate::common::utils::chr_label(c).into_owned()).collect::<Vec<_>>().join(", "));
     selphi_info!("");
 
     // Build individual per-chr SRP, then merge into multi-chr
@@ -710,13 +710,13 @@ pub fn build_multi_chr_srp_from_dir(
     let mut srp_paths: Vec<std::path::PathBuf> = Vec::new();
 
     for (i, (chr, bcf_path)) in bcf_files.iter().enumerate() {
-        selphi_step!("[{}/{}] Building SRP for chr{}...", i + 1, bcf_files.len(), chr);
+        selphi_step!("[{}/{}] Building SRP for {}...", i + 1, bcf_files.len(), crate::common::utils::chr_label(chr));
         let tmp_srp = tmp_dir.path().join(format!("chr{}.{}", chr, super::PANEL_EXT));
         super::writer::build_srp_any(bcf_path, &tmp_srp, threads, chunk_size_override)
             .map_err(|e| match e {
                 // Already reported: passed on as it is, for the caller's exit status.
                 super::writer::SrpWriterError::Io(io) if crate::Fatal::of(&io).is_some() => io,
-                e => io::Error::other(format!("chr{}: {}", chr, e)),
+                e => io::Error::other(format!("{}: {}", crate::common::utils::chr_label(chr), e)),
             })?;
         srp_paths.push(tmp_srp);
     }
@@ -776,7 +776,7 @@ pub fn merge_single_chr_srps(
     for path in srp_paths {
         let r = SrpReader::open(path, 2)?;
         let chr = r.chromosome().to_string();
-        selphi_info!("  chr{}: {} variants, {} haps", chr, r.n_variants(), r.n_haps());
+        selphi_info!("  {}: {} variants, {} haps", crate::common::utils::chr_label(&chr), r.n_variants(), r.n_haps());
         readers.push((chr, r));
     }
 
@@ -794,8 +794,8 @@ pub fn merge_single_chr_srps(
 
     if all_same_chr && !all_same_samples {
         // Same chromosome, different samples → horizontal merge
-        selphi_info!("  Detected same-chr merge: {} files with different samples on chr{}",
-            readers.len(), readers[0].0);
+        selphi_info!("  Detected same-chr merge: {} files with different samples on {}",
+            readers.len(), crate::common::utils::chr_label(&readers[0].0));
         drop(readers); // release SrpReaders, merge_samples_single_chr opens them itself
         return merge_samples_single_chr(srp_paths, output_path);
     }
@@ -803,8 +803,8 @@ pub fn merge_single_chr_srps(
     for (chr, r) in &readers[1..] {
         if r.n_haps() != n_haps {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Haplotype count mismatch: chr{} has {} haps, expected {} (from chr{})",
-                    chr, r.n_haps(), n_haps, readers[0].0)));
+                format!("Haplotype count mismatch: {} has {} haps, expected {} (from {})",
+                    crate::common::utils::chr_label(&chr), r.n_haps(), n_haps, crate::common::utils::chr_label(&readers[0].0))));
         }
         if r.sample_ids.len() != n_samples {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
