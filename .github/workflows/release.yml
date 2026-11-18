@@ -1,0 +1,98 @@
+name: Release binaries
+
+# Build and attach Linux release binaries when a GitHub Release is published.
+# Each architecture builds natively on its own GitHub-hosted runner (no QEMU),
+# producing a fast glibc-dynamic binary and a fully static musl binary:
+#
+#   selphi-linux-x86_64         glibc dynamic — full speed, needs glibc 2.35+ (Debian 12+)
+#   selphi-linux-x86_64-musl    static       — no libc dependency (see musl speed note below)
+#   selphi-linux-aarch64        glibc dynamic — full speed, needs glibc 2.35+ (Debian 12+)
+#   selphi-linux-aarch64-musl   static       — no libc dependency (see musl speed note below)
+#
+# musl speed: measured ≈ glibc on ARM (real.bcf panel imputation, Apple M4:
+# musl/glibc ~1.02, within run-to-run noise). mimalloc is the global allocator on
+# every build, so musl's slower native malloc is never used. An old note claimed
+# x86 musl ~60% slower in the HMM hot path; that predates the mimalloc default and
+# is unverified since — don't assume it without re-measuring.
+#
+# Portability notes — TWO independent floors:
+#   * libc floor (glibc builds only): set by the runner's glibc. ubuntu-22.04 ==
+#     glibc 2.35, covering Debian 12 (bookworm, 2.36) and Ubuntu 22.04+. Older or
+#     different-libc systems (Debian 11, RHEL 9, Alpine, scratch) need the musl
+#     build, which has no libc dependency at all.
+#   * CPU-feature floor (ALL builds, glibc AND musl): set in .cargo/config.toml.
+#     x86_64 targets the Haswell-2013 baseline (x86-64-v3: AVX2/FMA) with AVX-512
+#     detected at runtime, so it SIGILLs on pre-Haswell x86 (static musl removes
+#     the libc floor but NOT this one). aarch64 uses the generic ARMv8-A baseline
+#     (any Graviton incl. Graviton1), chosen over a microarch target-cpu to keep
+#     output byte-identical across architectures — see the .cargo/config.toml note.
+#
+# The aarch64 leg uses GitHub-hosted ARM runners (ubuntu-22.04-arm), which are
+# free for public repositories. On a private repo they are billable; switch that
+# leg to QEMU emulation or cross-compilation if that matters.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:   # manual run for testing; uploads binaries as workflow artifacts
+
+permissions:
+  contents: write      # needed to attach assets to the release
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            gnu_target: x86_64-unknown-linux-gnu
+            musl_target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            gnu_target: aarch64-unknown-linux-gnu
+            musl_target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4   # first-party (GitHub-owned); third-party actions below are SHA-pinned
+
+      - name: Install Rust 1.99.1 (matches the rc6 release build) + glibc/musl targets
+        uses: dtolnay/rust-toolchain@263313d2989f864a2b8613f97277288638e7d8f8 # 1.99.1 (pinned tag selects the toolchain)
+        with:
+          targets: ${{ matrix.gnu_target }}, ${{ matrix.musl_target }}
+
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: ${{ matrix.arch }}-release
+
+      - name: Build glibc + musl binaries
+        run: ./scripts/build-release.sh --musl   # writes dist/selphi-linux-<arch>[-musl]
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          shopt -s nullglob
+          for f in selphi-linux-*; do
+            [ "${f##*.}" = sha256 ] && continue
+            sha256sum "$f" > "$f.sha256"
+          done
+          ls -lh
+
+      - name: Attach binaries to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/selphi-linux-*   # auto-targets the release that triggered the run
+
+      - name: Upload as workflow artifacts (manual runs)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4   # first-party (GitHub-owned)
+        with:
+          name: selphi-linux-${{ matrix.arch }}
+          path: dist/selphi-linux-*
