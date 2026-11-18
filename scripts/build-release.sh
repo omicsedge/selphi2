@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # Build release binaries for distribution.
 #
-# Default: glibc dynamic for the host architecture (fast, requires glibc 2.28+).
-# --musl:  also build a fully static musl binary (portable to Alpine/scratch
-#          Docker/ancient distros, but ~60% slower in the HMM hot path).
+# Default: glibc dynamic for the host architecture (fast). The resulting binary
+#          needs the BUILD host's glibc or newer at runtime (e.g. a Debian 12 /
+#          bookworm build floors at glibc 2.36; an older build host floors lower,
+#          down to ~2.28). It is NOT a fixed 2.28 floor — build on the oldest
+#          distro you need to support, or ship the musl binary.
+# --musl:  also build a fully static musl binary (no libc dependency, so portable
+#          to Alpine/scratch Docker/old distros). Runtime speed ≈ glibc on ARM
+#          (measured: musl/glibc ~1.02 imputing real.bcf on an M4, within noise),
+#          because mimalloc is the global allocator so musl's slower malloc is never
+#          used; an old note of ~60% slower in the HMM hot path on x86 predates that
+#          default and is unverified since. Static linking removes the libc floor,
+#          NOT the CPU-feature floor: the musl binary still needs the target-cpu
+#          baseline in .cargo/config.toml (x86-64-v3 on x86; generic ARMv8-A on arm).
 #
 # Outputs land in dist/ with platform-suffixed names.
 #
@@ -49,7 +59,7 @@ build_glibc() {
     *) echo "unsupported arch $HOST_ARCH" >&2; exit 1 ;;
   esac
   echo "=== building glibc dynamic for $triple ==="
-  cargo build --release --target "$triple"
+  cargo build --release --locked --target "$triple"
   local out="$DIST/selphi-${OS}-${HOST_ARCH}"
   cp "target/$triple/release/selphi" "$out"
   echo "→ $out  ($(stat -c%s "$out" | numfmt --to=iec))"
@@ -72,10 +82,13 @@ build_musl() {
     exit 1
   fi
   echo "=== building musl static for $triple ==="
-  CC_x86_64_unknown_linux_musl=musl-gcc \
-  AR_x86_64_unknown_linux_musl=ar \
-  CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
-    cargo build --release --target "$triple"
+  # cc-rs reads CC_/AR_<triple> (lower-case, '-'→'_') to build the C deps against
+  # musl. Derive the name from $triple so this works for x86_64 AND aarch64 musl
+  # (not just the x86_64 names hardcoded before). The linker (musl-gcc) is already
+  # set per target in .cargo/config.toml, so no CARGO_TARGET_*_LINKER override here.
+  local lc="${triple//-/_}"
+  env "CC_${lc}=musl-gcc" "AR_${lc}=ar" \
+    cargo build --release --locked --target "$triple"
   local out="$DIST/selphi-${OS}-${HOST_ARCH}-musl"
   cp "target/$triple/release/selphi" "$out"
   echo "→ $out  ($(stat -c%s "$out" | numfmt --to=iec))"

@@ -19,8 +19,14 @@ rustflags = ["-C", "target-cpu=x86-64-v3"]
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "target-cpu=x86-64-v3"]
 
+# aarch64 Linux uses the generic ARMv8-A baseline, NOT a Graviton-specific
+# target-cpu. This keeps the imputation output byte-identical across architectures
+# (the rc6 release is built this way and checked byte-identical to x86): a
+# microarch target-cpu like neoverse-n1 can change FP/vector codegen and diverge
+# from the x86 result, and ARM has no documented cross-target-cpu output invariant
+# the way the x86 HMM kernels do. generic also runs on any ARMv8-A core (Graviton1+).
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=neoverse-n1"]
+rustflags = ["-C", "target-cpu=generic"]
 
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-cpu=apple-m1"]
@@ -32,3 +38,12 @@ rustflags = ["-C", "target-cpu=apple-m1"]
 [target.x86_64-unknown-linux-musl]
 linker = "musl-gcc"
 rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+crt-static"]
+
+# aarch64 musl static build — the ARM counterpart of the x86_64 entry above.
+# Same generic ARMv8-A baseline as the aarch64 glibc target (see note there);
+# built natively on an ARM host (the release workflow uses a GitHub-hosted
+# ubuntu-22.04-arm runner) with `musl-tools`, which provides the aarch64 `musl-gcc`
+# wrapper.
+[target.aarch64-unknown-linux-musl]
+linker = "musl-gcc"
+rustflags = ["-C", "target-cpu=generic", "-C", "target-feature=+crt-static"]
