@@ -394,12 +394,13 @@ pub struct Args {
 
     /// Process target samples in batches of N for memory-bounded imputation.
     /// 0 = off (default; all samples held simultaneously in RAM, max wall).
-    /// N > 0 = process N samples at a time, stream batch BCFs to disk, merge
-    /// at end. Bit-identical output. Memory drops linearly with batch size;
+    /// N > 0 = process N samples at a time, stream batch outputs to disk, merge
+    /// at end. Uses one ensemble member instead of the usual two, so dosages
+    /// may differ from an unbatched run. Memory drops linearly with batch size;
     /// wall increases ~30-40% due to merge step. Recommended: 100-500 samples
     /// for biobank panels; not needed for small panels.
     ///
-    /// Only effective when --bcf is set (BCF-only feature in current version).
+    /// Supports VCF.gz, BCF, Parquet, PGEN and SelfDecode output.
     #[arg(long, default_value = "0")]
     pub sample_batch_size: usize,
 
@@ -420,7 +421,7 @@ pub struct Args {
     #[arg(long)]
     pub precompute_candidates: bool,
 
-    /// Output VCF.gz instead of BCF (default: BCF for speed)
+    /// Write VCF.gz output (the default); --bcf selects BCF instead
     #[arg(long)]
     pub vcf: bool,
 
@@ -501,7 +502,7 @@ pub struct Args {
     #[arg(long)]
     pub pgen: bool,
 
-    /// Write all formats simultaneously (VCF.gz + Parquet + PGEN)
+    /// Write all formats simultaneously (VCF.gz, or BCF with --bcf, + Parquet + PGEN + SelfDecode)
     #[arg(long)]
     pub all_formats: bool,
 

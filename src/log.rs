@@ -92,7 +92,13 @@ pub fn init(log_path: &Path, debug: bool) {
     if let Some(dir) = log_path.parent() && !dir.as_os_str().is_empty() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let file = std::fs::File::create(log_path).ok();
+    let file = match std::fs::File::create(log_path) {
+        Ok(file) => Some(file),
+        Err(e) => {
+            eprintln!("Warning: log file {} could not be written: {}; logging continues on stderr", log_path.display(), e);
+            None
+        }
+    };
 
     // Debug dir: sibling of log file, e.g. results/debug/
     let debug_dir = log_path.parent()

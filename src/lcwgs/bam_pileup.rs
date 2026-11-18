@@ -327,6 +327,12 @@ pub fn pileup_bams(
     link_slots: Option<usize>,
 ) -> io::Result<BamGl> {
     let n_var = pos.len();
+    if n_var == 0 {
+        let span = region.map(|(s, e)| format!(":{}-{}", s, e)).unwrap_or_default();
+        return Err(io::Error::new(io::ErrorKind::InvalidInput,
+            format!("No active sites remain for BAM/CRAM pileup on {}{} after filtering (the region may contain only indels)",
+                crate::common::utils::chr_label(chrom), span)));
+    }
     let n_samples = bam_paths.len();
     assert_eq!(ref_base.len(), n_var);
     let lut = PhredLut::new();
@@ -377,8 +383,10 @@ pub fn pileup_bams(
     let mut depth = depth_at.map(|d| vec![0u16; d.len() * n_samples]);
     let mut linkage = Vec::new();
     let mut total = PileupReport::default();
+    let mut n_indexed = 0;
     for (s, r) in per_sample.into_iter().enumerate() {
         let (id, blk, rep, dc, link) = r?;
+        n_indexed += rep.indexed_chromosome as usize;
         if let (Some(all), Some(dc)) = (depth.as_mut(), dc) {
             for (i, c) in dc.into_iter().enumerate() { all[i * n_samples + s] = c; }
         }
@@ -394,6 +402,10 @@ pub fn pileup_bams(
         }
         sample_ids.push(id);
         blocks.push(blk);
+    }
+    if n_indexed > 0 {
+        crate::selphi_info!("  lcWGS-BAM/CRAM: {} of {} inputs read through chromosome indexes for {} (per input with --debug)",
+            n_indexed, n_samples, crate::common::utils::chr_label(chrom));
     }
     if baq_ctx.is_some() && n_samples > 1 {
         crate::selphi_step!("lcWGS-BAM: {} samples: {} reads, {} realigned ({:.1}%), {} BAQ no-ops (per sample with --debug)",
@@ -432,6 +444,8 @@ struct BaqCtx<'a> {
 /// What the pileup did with a sample's reads (for the log).
 #[derive(Default)]
 pub struct PileupReport {
+    /// Whole-chromosome index query for an input holding other chromosomes.
+    pub indexed_chromosome: bool,
     pub n_reads: u64,
     pub n_realigned: u64,
     pub n_baq_noop: u64,
@@ -512,7 +526,7 @@ fn pileup_one(
             .and_then(|_| header.reference_sequences().get_index(target_rid).map(|(_, rs)| (1, usize::from(rs.length()) as i64))),
     };
     if region.is_none() && region_query.is_some() {
-        crate::selphi_info!("  lcWGS-BAM: {}: reading {} through its index (the BAM holds other chromosomes)", path, String::from_utf8_lossy(&contig_name));
+        crate::selphi_debug!("  lcWGS-BAM: {}: reading {} through its index (the BAM holds other chromosomes)", path, String::from_utf8_lossy(&contig_name));
     }
 
     let mut cigar_buf: Vec<(Kind, usize)> = Vec::with_capacity(16);
@@ -580,7 +594,8 @@ fn pileup_one(
         Ok(())
     };
 
-    let (gl, rep, depth, link) = pileup_core(&mut source, sites, params, lut, em, indel_model, baq, within, depth_at, link_slots)?;
+    let (gl, mut rep, depth, link) = pileup_core(&mut source, sites, params, lut, em, indel_model, baq, within, depth_at, link_slots)?;
+    rep.indexed_chromosome = region.is_none() && region_query.is_some();
     Ok((sample_id, gl, rep, depth, link))
 }
 
@@ -657,7 +672,7 @@ fn pileup_one_cram(
             let here = crai.iter().filter(|r| r.reference_sequence_id() == Some(target_rid)).count();
             let len = { let (_, h) = open()?; h.reference_sequences().get_index(target_rid).map(|(_, rs)| usize::from(rs.length()) as i64) };
             (2 * here < crai.len()).then_some(()).and(len).map(|l| {
-                crate::selphi_info!("  lcWGS-CRAM: {}: reading {} through its index (the CRAM holds other chromosomes)", path, String::from_utf8_lossy(&contig_name));
+                crate::selphi_debug!("  lcWGS-CRAM: {}: reading {} through its index (the CRAM holds other chromosomes)", path, String::from_utf8_lossy(&contig_name));
                 (1, l)
             })
         }
@@ -728,7 +743,8 @@ fn pileup_one_cram(
         Ok(())
     };
 
-    let (gl, rep, depth, link) = pileup_core(&mut source, sites, params, lut, em, indel_model, baq, within, depth_at, link_slots)?;
+    let (gl, mut rep, depth, link) = pileup_core(&mut source, sites, params, lut, em, indel_model, baq, within, depth_at, link_slots)?;
+    rep.indexed_chromosome = region.is_none() && region_query.is_some();
     Ok((sample_id, gl, rep, depth, link))
 }
 
@@ -1814,6 +1830,17 @@ fn accumulate(ll: &mut [f64; 3], b: u8, rb: u8, ab: u8, q: usize, lut: &PhredLut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_active_sites_are_rejected_before_pileup() {
+        for baq in [false, true] {
+            let err = pileup_bams(&["unused.bam".to_string()], "chr22", &[], &[], &[], &[],
+                Some((100, 200)), Some("unused.fa"), None, PileupParams { baq, ..Default::default() }, None, None)
+                .err().expect("empty active sites must be rejected");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+            assert!(err.to_string().contains("chr22:100-200") && err.to_string().contains("No active sites"));
+        }
+    }
 
     /// The single-sample pass (parallel BAQ batches) gives the sequential
     /// pass's likelihoods and counts bit for bit: realigned and no-op reads,

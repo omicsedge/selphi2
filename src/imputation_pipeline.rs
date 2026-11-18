@@ -741,7 +741,7 @@ fn finalize_batched_outputs(
         let t = Instant::now();
         selphi::io::bcf_merge::merge_batch_bcfs(
             &batch_paths, out_file, sample_names, contig_field, version, no_ap, gp, extra_header,
-        ).expect("Batch BCF merge failed");
+        ).unwrap_or_else(|e| panic!("Could not merge batch BCF output into {} (disk full or unwritable output): {e}", out_file.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -754,7 +754,7 @@ fn finalize_batched_outputs(
         let t = Instant::now();
         selphi::io::vcf_merge::merge_batch_vcfs(
             &batch_paths, out_file, sample_names, contig_field, version, no_ap, gp, extra_header,
-        ).expect("Batch VCF merge failed");
+        ).unwrap_or_else(|e| panic!("Could not merge batch VCF output into {} (disk full or unwritable output): {e}", out_file.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -766,7 +766,9 @@ fn finalize_batched_outputs(
         let sd_out = out_path.to_path_buf();
         selphi_info!("  Merging {} batch SelfDecode ZIPs → {} ...", batch_paths.len(), sd_out.display());
         let t = Instant::now();
-        selphi::io::sd_merge::merge_batch_sds(&batch_paths, &sd_out).expect("Batch SD merge failed");
+        selphi::io::sd_merge::merge_batch_sds(&batch_paths, &sd_out)
+            .unwrap_or_else(|e| panic!("Could not merge batch SelfDecode output into {} (disk full or unwritable output): {e}",
+                selphi::common::utils::out_path(&sd_out, "selfdecode.zip").display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -779,7 +781,7 @@ fn finalize_batched_outputs(
         selphi_info!("  Merging {} batch PGENs → {} ...", batch_paths.len(), pgen_out.display());
         let t = Instant::now();
         selphi::io::pgen_merge::merge_batch_pgens(&batch_paths, out_path, sample_names)
-            .expect("Batch PGEN merge failed");
+            .unwrap_or_else(|e| panic!("Could not merge batch PGEN output into {} (disk full or unwritable output): {e}", pgen_out.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for (p, v) in &batch_paths { let _ = std::fs::remove_file(p); let _ = std::fs::remove_file(v); }
         for (p, _) in &batch_paths { let _ = std::fs::remove_file(selphi::common::utils::out_path(p, "psam")); }
@@ -793,7 +795,7 @@ fn finalize_batched_outputs(
         selphi_info!("  Merging {} batch Parquets → {} ...", batch_paths.len(), parquet_out.display());
         let t = Instant::now();
         selphi::io::parquet_merge::merge_batch_parquets(&batch_paths, &parquet_out, sample_names)
-            .expect("Batch Parquet merge failed");
+            .unwrap_or_else(|e| panic!("Could not merge batch Parquet output into {} (disk full or unwritable output): {e}", parquet_out.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -1287,8 +1289,8 @@ pub fn run(args: &Args, target_path: &str, output_path: &str) {
     // Keep the unphased target for the extra independent chains (phasing consumes
     // a phased copy into `targ_alleles`).
     let unphased_for_ensemble = if indep_chain > 1 { Some(targ_alleles.clone()) } else { None };
-    if ensemble_n > 1 {
-        selphi_step!("Phase-ensemble: {} members (seeds {}..{})", ensemble_n, args.seed, args.seed + ensemble_n as i64 - 1);
+    if indep_chain > 1 {
+        selphi_step!("Phase-ensemble: {} independent chains (seeds {}..{})", indep_chain, args.seed, args.seed + indep_chain as i64 - 1);
     }
     if needs_phasing {
         if !is_phased {
@@ -1510,11 +1512,6 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
             .unwrap_or_else(|e| { selphi_error!("Failed to parse --target-ancestry TSV: {}", e); std::process::exit(1) })
     });
     let ancestry_active = panel_anc.is_some() && target_anc.is_some();
-    if ancestry_active {
-        selphi_step!("Ancestry-aware PBWT active (strength={:.2})", args.ancestry_strength);
-    } else if (panel_anc.is_some() || target_anc.is_some()) && !(args.local_ancestry && panel_anc.is_some()) {
-        selphi_info!("  Note: --panel-ancestry needs --local-ancestry (or --target-ancestry with --precompute-candidates) to reweight candidates; running baseline.");
-    }
 
     // Per-window candidate selection is the default. Each window picks its
     // own top-K from window-local PBWT coded steps so segment-specific haps
@@ -1538,12 +1535,16 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
         }),
         _ => None,
     };
-    if cand_ancestry.is_some() && precomputed_candidates.is_none() {
+    if precomputed_candidates.is_some() && (ancestry_active || cand_ancestry.is_some()) {
+        selphi_step!("Ancestry-aware PBWT active (strength={:.2})", args.ancestry_strength);
+    } else if cand_ancestry.is_some() && precomputed_candidates.is_none() {
         selphi_step!("Ancestry prior on the per-window candidate ranking (strength {:.2}, smooth r={})",
             args.ancestry_strength, args.local_ancestry_smooth);
         if args.export_local_ancestry {
             selphi_info!("  Note: --export-local-ancestry writes the chromosome-level estimate of --precompute-candidates; the per-window estimates are not exported.");
         }
+    } else if panel_anc.is_some() || target_anc.is_some() {
+        selphi_info!("  Note: ancestry weighting needs --panel-ancestry with --local-ancestry, or both ancestry TSVs with active chromosome-level candidate precomputation; running baseline.");
     }
 
     // ref_bm_imp stays alive for per-window imputation extraction.
@@ -1942,7 +1943,7 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
                 vcf_tx: &vcf_tx,
             },
             &mut dr2_acc,
-        ).expect("Output write failed");
+        ).unwrap_or_else(|e| panic!("Output write failed for {} (disk full or unwritable output): {e}", out_path.display()));
         }
 
         let interp_secs = t0_interp.elapsed().as_secs_f64();

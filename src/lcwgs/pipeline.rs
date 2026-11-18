@@ -1688,11 +1688,18 @@ fn run_chunked_gibbs(
     let default_budget = baseline_memory_budget(n_shared, srp.metadata.n_haps, n_samples,
         n_chunks, threads, shared, host_allowance);
     let explicit_budget = crate::config::f64_opt("LCWGS_MEM_BUDGET_GB").map(|gb| {
-        assert!(gb.is_finite() && gb > 0.0, "LCWGS_MEM_BUDGET_GB must be positive and finite");
+        if !gb.is_finite() || gb <= 0.0 {
+            crate::selphi_error!("LCWGS_MEM_BUDGET_GB={} must be positive and finite", gb);
+            std::process::exit(1);
+        }
         (gb * 1e9) as usize
     });
     let limit = explicit_budget.unwrap_or(default_budget);
-    assert!(limit > shared, "lcWGS memory budget must exceed shared process storage");
+    if limit <= shared {
+        crate::selphi_error!("lcWGS memory budget {} bytes ({:.3} GB) must exceed shared process storage of {} bytes ({:.3} GB); increase LCWGS_MEM_BUDGET_GB",
+            limit, limit as f64 / 1e9, shared, shared as f64 / 1e9);
+        std::process::exit(1);
+    }
     let memory = (n_samples <= 1).then(|| {
         let budget = super::memory::MemoryBudget::new(limit, shared);
         if explicit_budget.is_some() { budget } else { budget.lenient() }
@@ -1718,7 +1725,8 @@ fn run_chunked_gibbs(
     let n_chains = super::iterate::gibbs_chains(params);
     let concurrent = split_band.is_some() && split_concurrent(single_sample, selector, n_chains);
     if concurrent {
-        crate::selphi_info!("  lcWGS SPLIT: the two passes of a chunk run at the same time, sharing its panel side and each selection sweep's panel decode (LCWGS_SPLIT_SERIAL=1: one after the other, same output)");
+        crate::selphi_info!("  lcWGS SPLIT: the two passes of each chunk run at the same time (details with --debug)");
+        crate::selphi_debug!("  lcWGS SPLIT: the two passes of a chunk run at the same time, sharing its panel side and each selection sweep's panel decode (LCWGS_SPLIT_SERIAL=1: one after the other, same output)");
     }
     // Resident sites per chunk (active + its passengers), and whether its two SPLIT
     // passes may run at the same time: charged as two chains, which an explicit

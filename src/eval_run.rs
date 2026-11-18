@@ -125,7 +125,7 @@ pub fn evaluate(req: &EvalRequest, output_path: &str, final_path: &Path) {
         req.exclude_panel_monomorphic.as_deref().map(Path::new),
     ).unwrap_or_else(|e| { selphi_error!("Failed to build the site exclusion set: {}", e); std::process::exit(1) });
     if homref {
-        selphi_info!("  homref:   absent→hom-ref (truth is variant-only)");
+        selphi_info!("  homref:   absent→hom-ref");
         let raw_path = req.truth_raw.as_deref().map(Path::new);
         let (comb, snp, indel, counts, site, rawdiag) = evaluation_or_exit(selphi::eval::accuracy::evaluate_imputation_with_options(
             final_path, truth_path, &shared, raw_path, &exclude, &req.dosage_options,

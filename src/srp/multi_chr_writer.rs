@@ -408,7 +408,7 @@ pub fn merge_samples_single_chr(
         let rc = r.chromosome();
         if rc != chr {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Chromosome mismatch: file 0 has {}, file {} has {}", crate::common::utils::chr_label(&chr), i, crate::common::utils::chr_label(&rc))));
+                format!("Chromosome mismatch: file 0 has {}, file {} has {}", crate::common::utils::chr_label(&chr), i, crate::common::utils::chr_label(rc))));
         }
     }
 
@@ -804,16 +804,16 @@ pub fn merge_single_chr_srps(
         if r.n_haps() != n_haps {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
                 format!("Haplotype count mismatch: {} has {} haps, expected {} (from {})",
-                    crate::common::utils::chr_label(&chr), r.n_haps(), n_haps, crate::common::utils::chr_label(&readers[0].0))));
+                    crate::common::utils::chr_label(chr), r.n_haps(), n_haps, crate::common::utils::chr_label(&readers[0].0))));
         }
         if r.sample_ids.len() != n_samples {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Sample count mismatch: chr{} has {} samples, expected {}",
-                    chr, r.sample_ids.len(), n_samples)));
+                format!("Sample count mismatch: {} has {} samples, expected {}",
+                    crate::common::utils::chr_label(chr), r.sample_ids.len(), n_samples)));
         }
         if r.sample_ids != *ref_samples {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Sample names mismatch between chr{} and chr{}", chr, readers[0].0)));
+                format!("Sample names mismatch between {} and {}", crate::common::utils::chr_label(chr), crate::common::utils::chr_label(&readers[0].0))));
         }
     }
 
@@ -821,7 +821,7 @@ pub fn merge_single_chr_srps(
     for i in 1..readers.len() {
         if readers[i].0 == readers[i - 1].0 {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Duplicate chromosome: chr{}", readers[i].0)));
+                format!("Duplicate chromosome: {}", crate::common::utils::chr_label(&readers[i].0))));
         }
     }
 
@@ -878,7 +878,7 @@ pub fn merge_single_chr_srps(
 
     for (chr_idx, (chr_name, reader)) in readers.iter().enumerate() {
         let chr_data_offset = w.stream_position()?;
-        selphi_step!("[{}/{}] Merging chr{}...", chr_idx + 1, n_chr, chr_name);
+        selphi_step!("[{}/{}] Merging {}...", chr_idx + 1, n_chr, crate::common::utils::chr_label(chr_name));
 
         let n_variants = reader.n_variants();
         let n_tile_rows = n_variants.div_ceil(TILE_ROWS);
@@ -927,7 +927,7 @@ pub fn merge_single_chr_srps(
         // Tile index + tile data: copy compressed tiles with offset adjustment
         let tiled = reader.tiled.as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData,
-                format!("SRP for chr{} has no tiled backend", chr_name)))?;
+                format!("SRP for {} has no tiled backend", crate::common::utils::chr_label(chr_name))))?;
 
         w.write_all(&(n_tiles as u32).to_le_bytes())?;
         let tile_index_pos = w.stream_position()?;
@@ -991,12 +991,14 @@ pub fn merge_srps_from_dir(
 ) -> io::Result<()> {
     // Scan directory for panel files
     let mut srp_files: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(source_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if super::is_panel_path(&name) {
-                srp_files.push(entry.path());
-            }
+    let entries = std::fs::read_dir(source_dir).map_err(|e| io::Error::new(e.kind(),
+        format!("Cannot read SRP directory {}: {}", source_dir.display(), e)))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| io::Error::new(e.kind(),
+            format!("Cannot read entry in SRP directory {}: {}", source_dir.display(), e)))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if super::is_panel_path(&name) {
+            srp_files.push(entry.path());
         }
     }
 
@@ -1028,4 +1030,24 @@ pub fn merge_srps_from_dir(
     selphi_info!("");
 
     merge_single_chr_srps(&valid, output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_directory_errors_keep_the_path_and_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("not-a-directory");
+        std::fs::write(&file, b"").unwrap();
+        for source in [dir.path().join("missing"), file] {
+            let kind = std::fs::read_dir(&source).err().unwrap().kind();
+            let err = merge_srps_from_dir(&source, &dir.path().join("out")).unwrap_err();
+            assert_eq!(err.kind(), kind);
+            assert!(err.to_string().contains("Cannot read SRP directory") && err.to_string().contains(source.to_str().unwrap()));
+        }
+        let err = merge_srps_from_dir(dir.path(), &dir.path().join("out")).unwrap_err();
+        assert!(err.to_string().contains("No .srp2 or .srp files found"));
+    }
 }

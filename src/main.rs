@@ -241,9 +241,14 @@ fn main() {
         let bam_paths: Vec<String> = if let Some(b) = args.bam.as_deref() {
             vec![b.to_string()]
         } else if let Some(list) = args.bam_list.as_deref() {
-            std::fs::read_to_string(list)
+            let paths: Vec<String> = std::fs::read_to_string(list)
                 .unwrap_or_else(|e| { eprintln!("Error reading --bam-list {}: {}", list, e); std::process::exit(1); })
-                .lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+                .lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+            if paths.is_empty() {
+                eprintln!("Error: --bam-list {} contains no BAM/CRAM paths", list);
+                std::process::exit(1);
+            }
+            paths
         } else if let Some(p) = args.input.as_deref().filter(|p| {
             let p = p.to_ascii_lowercase();
             p.ends_with(".bam") || p.ends_with(".cram")

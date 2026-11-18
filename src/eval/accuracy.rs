@@ -1567,7 +1567,10 @@ fn shared_reindex(path: &Path, shared: &[String]) -> io::Result<Vec<usize>> {
     let (_, names) = VariantReader::open(path)?;
     let m: std::collections::HashMap<&str, usize> =
         names.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect();
-    Ok(shared.iter().map(|s| *m.get(s.as_str()).expect("shared sample missing from file")).collect())
+    shared.iter().map(|s| m.get(s.as_str()).copied().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput,
+            format!("Shared sample '{}' is missing from {}", s, path.display()))
+    })).collect()
 }
 
 #[derive(Clone)]
@@ -1961,13 +1964,10 @@ pub fn print_summary(site_acc: &SiteAccumulator, sample_acc: &SampleAccumulator,
         crate::selphi_info!("  Chromosomes: {} ({})", counts.chromosomes.len(),
             counts.chromosomes.join(", "));
     }
-    // Both files have variants but nothing matched → almost always a scope/contig
-    // mismatch (e.g. a whole-genome truth vs a single-chromosome imputed file, or
-    // disjoint chromosomes). The merge keys on (normalized-contig, pos), so a 0
-    // here means the contig SETS don't overlap — not a real accuracy of zero.
+    // Matching sites may also have been deliberately excluded from scoring.
     if n_matched == 0 && counts.n_imp_variants > 0 && counts.n_truth_variants > 0 {
-        crate::selphi_info!("  [WARN] 0 variants matched despite non-empty inputs — imputed and truth \
-likely cover different chromosomes (check that both span the same contig set; chr-prefix is handled).");
+        crate::selphi_info!("  [WARN] 0 matching variants remain for scoring despite non-empty inputs — check site exclusions \
+and contig, position or allele mismatches (chr-prefix is handled).");
     }
 }
 
@@ -2575,6 +2575,19 @@ mod tests {
         }
         writer.try_finish().unwrap();
         path
+    }
+
+    #[test]
+    fn raw_truth_missing_shared_sample_returns_input_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let samples = vec!["A".to_string(), "B".to_string()];
+        let strong = fixture(dir.path(), "strong.vcf.gz", &["B", "A"], &[]);
+        let raw = fixture(dir.path(), "raw.vcf.gz", &["A"], &[]);
+        assert_eq!(shared_reindex(&strong, &samples).unwrap(), vec![1, 0]);
+        let err = evaluate_imputation(&strong, &strong, &samples, Some(&raw), &super::super::exclude::SiteExclusion::default())
+            .err().expect("raw truth must contain every shared sample");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("'B'") && err.to_string().contains(raw.to_str().unwrap()));
     }
 
     #[test]
