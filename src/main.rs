@@ -241,9 +241,14 @@ fn main() {
         let bam_paths: Vec<String> = if let Some(b) = args.bam.as_deref() {
             vec![b.to_string()]
         } else if let Some(list) = args.bam_list.as_deref() {
-            std::fs::read_to_string(list)
+            let paths: Vec<String> = std::fs::read_to_string(list)
                 .unwrap_or_else(|e| { eprintln!("Error reading --bam-list {}: {}", list, e); std::process::exit(1); })
-                .lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+                .lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+            if paths.is_empty() {
+                eprintln!("Error: --bam-list {} contains no BAM/CRAM paths", list);
+                std::process::exit(1);
+            }
+            paths
         } else if let Some(p) = args.input.as_deref().filter(|p| {
             let p = p.to_ascii_lowercase();
             p.ends_with(".bam") || p.ends_with(".cram")
@@ -571,7 +576,7 @@ fn main() {
 
         let (imp_samples, truth_samples, shared) =
             selphi::eval::accuracy::find_shared_samples(imp_path, truth_path)
-                .expect("Failed to read sample headers");
+                .unwrap_or_else(|e| { selphi_error!("Failed to read sample headers: {}", e); std::process::exit(1) });
 
         selphi_info!("  Imputed:  {} samples", imp_samples.len());
         selphi_info!("  Truth:    {} samples", truth_samples.len());
@@ -610,7 +615,7 @@ fn main() {
         let exclude = selphi::eval::exclude::SiteExclusion::build(
             args.exclude_sites.as_deref().map(Path::new),
             args.exclude_panel_monomorphic.as_deref().map(Path::new),
-        ).expect("Failed to build the site exclusion set");
+        ).unwrap_or_else(|e| { selphi_error!("Failed to build the site exclusion set: {}", e); std::process::exit(1) });
         if homref {
             let raw_path = args.truth_raw.as_deref().map(Path::new);
             if let Some(p) = raw_path { selphi_info!("  raw:      {}", p.display()); }
@@ -623,7 +628,7 @@ fn main() {
             selphi::eval::accuracy::print_maf_bins(&site);
             selphi::eval::accuracy::print_raw_truth_diag(&rawdiag);
             selphi::eval::accuracy::write_imputation_json(&json_path, &comb, &snp, &indel, args.by_type, &counts, Some(&shared), Some(&site), Some(&rawdiag))
-                .expect("Failed to write JSON summary");
+                .unwrap_or_else(|e| { selphi_error!("Failed to write JSON summary: {}", e); std::process::exit(1) });
         } else {
             selphi_step!("Stream-merging VCFs...");
             if args.truth_raw.is_some() {
@@ -635,7 +640,7 @@ pass --homref-absent on to apply it (matched-sites scoring ignores it)");
             ));
             selphi::eval::accuracy::print_summary(&site_acc, &sample_acc, &counts);
             selphi::eval::accuracy::write_json_summary(&json_path, &site_acc, &sample_acc, &counts, Some(&shared))
-                .expect("Failed to write JSON summary");
+                .unwrap_or_else(|e| { selphi_error!("Failed to write JSON summary: {}", e); std::process::exit(1) });
         }
         selphi_step!("Results: {}", json_path.display());
 

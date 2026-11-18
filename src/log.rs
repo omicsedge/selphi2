@@ -87,7 +87,18 @@ static DEBUG_FLAG: AtomicBool = AtomicBool::new(false);
 /// Initialize the global logger. Call once from main() after parsing args.
 /// `debug_dir` is derived from `log_path` parent: `{out_dir}/debug/`.
 pub fn init(log_path: &Path, debug: bool) {
-    let file = std::fs::File::create(log_path).ok();
+    // The log sits next to the outputs: create their folder (`--out results/x` with no `results/`),
+    // or the log is silently dropped and the first output writer fails.
+    if let Some(dir) = log_path.parent() && !dir.as_os_str().is_empty() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let file = match std::fs::File::create(log_path) {
+        Ok(file) => Some(file),
+        Err(e) => {
+            eprintln!("Warning: log file {} could not be written: {}; logging continues on stderr", log_path.display(), e);
+            None
+        }
+    };
 
     // Debug dir: sibling of log file, e.g. results/debug/
     let debug_dir = log_path.parent()

@@ -97,7 +97,7 @@ pub fn build_multi_chr_srp(
     let mut chr_entries: Vec<ChrDirectoryEntry> = Vec::with_capacity(n_chromosomes);
 
     for (chr_idx, (chr_name, contig_csi)) in contig_order.iter().enumerate() {
-        selphi_step!("[{}/{}] Processing chr{}...", chr_idx + 1, n_chromosomes, chr_name);
+        selphi_step!("[{}/{}] Processing {}...", chr_idx + 1, n_chromosomes, crate::common::utils::chr_label(chr_name));
 
         let chr_data_offset = w.stream_position()?;
 
@@ -408,7 +408,7 @@ pub fn merge_samples_single_chr(
         let rc = r.chromosome();
         if rc != chr {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Chromosome mismatch: file 0 has chr{}, file {} has chr{}", chr, i, rc)));
+                format!("Chromosome mismatch: file 0 has {}, file {} has {}", crate::common::utils::chr_label(&chr), i, crate::common::utils::chr_label(rc))));
         }
     }
 
@@ -702,7 +702,7 @@ pub fn build_multi_chr_srp_from_dir(
     }
 
     selphi_info!("  Found {} per-chr files: {}", bcf_files.len(),
-        bcf_files.iter().map(|(c, _)| format!("chr{}", c)).collect::<Vec<_>>().join(", "));
+        bcf_files.iter().map(|(c, _)| crate::common::utils::chr_label(c).into_owned()).collect::<Vec<_>>().join(", "));
     selphi_info!("");
 
     // Build individual per-chr SRP, then merge into multi-chr
@@ -710,13 +710,13 @@ pub fn build_multi_chr_srp_from_dir(
     let mut srp_paths: Vec<std::path::PathBuf> = Vec::new();
 
     for (i, (chr, bcf_path)) in bcf_files.iter().enumerate() {
-        selphi_step!("[{}/{}] Building SRP for chr{}...", i + 1, bcf_files.len(), chr);
+        selphi_step!("[{}/{}] Building SRP for {}...", i + 1, bcf_files.len(), crate::common::utils::chr_label(chr));
         let tmp_srp = tmp_dir.path().join(format!("chr{}.{}", chr, super::PANEL_EXT));
         super::writer::build_srp_any(bcf_path, &tmp_srp, threads, chunk_size_override)
             .map_err(|e| match e {
                 // Already reported: passed on as it is, for the caller's exit status.
                 super::writer::SrpWriterError::Io(io) if crate::Fatal::of(&io).is_some() => io,
-                e => io::Error::other(format!("chr{}: {}", chr, e)),
+                e => io::Error::other(format!("{}: {}", crate::common::utils::chr_label(chr), e)),
             })?;
         srp_paths.push(tmp_srp);
     }
@@ -776,7 +776,7 @@ pub fn merge_single_chr_srps(
     for path in srp_paths {
         let r = SrpReader::open(path, 2)?;
         let chr = r.chromosome().to_string();
-        selphi_info!("  chr{}: {} variants, {} haps", chr, r.n_variants(), r.n_haps());
+        selphi_info!("  {}: {} variants, {} haps", crate::common::utils::chr_label(&chr), r.n_variants(), r.n_haps());
         readers.push((chr, r));
     }
 
@@ -794,8 +794,8 @@ pub fn merge_single_chr_srps(
 
     if all_same_chr && !all_same_samples {
         // Same chromosome, different samples → horizontal merge
-        selphi_info!("  Detected same-chr merge: {} files with different samples on chr{}",
-            readers.len(), readers[0].0);
+        selphi_info!("  Detected same-chr merge: {} files with different samples on {}",
+            readers.len(), crate::common::utils::chr_label(&readers[0].0));
         drop(readers); // release SrpReaders, merge_samples_single_chr opens them itself
         return merge_samples_single_chr(srp_paths, output_path);
     }
@@ -803,17 +803,17 @@ pub fn merge_single_chr_srps(
     for (chr, r) in &readers[1..] {
         if r.n_haps() != n_haps {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Haplotype count mismatch: chr{} has {} haps, expected {} (from chr{})",
-                    chr, r.n_haps(), n_haps, readers[0].0)));
+                format!("Haplotype count mismatch: {} has {} haps, expected {} (from {})",
+                    crate::common::utils::chr_label(chr), r.n_haps(), n_haps, crate::common::utils::chr_label(&readers[0].0))));
         }
         if r.sample_ids.len() != n_samples {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Sample count mismatch: chr{} has {} samples, expected {}",
-                    chr, r.sample_ids.len(), n_samples)));
+                format!("Sample count mismatch: {} has {} samples, expected {}",
+                    crate::common::utils::chr_label(chr), r.sample_ids.len(), n_samples)));
         }
         if r.sample_ids != *ref_samples {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Sample names mismatch between chr{} and chr{}", chr, readers[0].0)));
+                format!("Sample names mismatch between {} and {}", crate::common::utils::chr_label(chr), crate::common::utils::chr_label(&readers[0].0))));
         }
     }
 
@@ -821,7 +821,7 @@ pub fn merge_single_chr_srps(
     for i in 1..readers.len() {
         if readers[i].0 == readers[i - 1].0 {
             return Err(io::Error::new(io::ErrorKind::InvalidData,
-                format!("Duplicate chromosome: chr{}", readers[i].0)));
+                format!("Duplicate chromosome: {}", crate::common::utils::chr_label(&readers[i].0))));
         }
     }
 
@@ -878,7 +878,7 @@ pub fn merge_single_chr_srps(
 
     for (chr_idx, (chr_name, reader)) in readers.iter().enumerate() {
         let chr_data_offset = w.stream_position()?;
-        selphi_step!("[{}/{}] Merging chr{}...", chr_idx + 1, n_chr, chr_name);
+        selphi_step!("[{}/{}] Merging {}...", chr_idx + 1, n_chr, crate::common::utils::chr_label(chr_name));
 
         let n_variants = reader.n_variants();
         let n_tile_rows = n_variants.div_ceil(TILE_ROWS);
@@ -927,7 +927,7 @@ pub fn merge_single_chr_srps(
         // Tile index + tile data: copy compressed tiles with offset adjustment
         let tiled = reader.tiled.as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData,
-                format!("SRP for chr{} has no tiled backend", chr_name)))?;
+                format!("SRP for {} has no tiled backend", crate::common::utils::chr_label(chr_name))))?;
 
         w.write_all(&(n_tiles as u32).to_le_bytes())?;
         let tile_index_pos = w.stream_position()?;
@@ -991,12 +991,14 @@ pub fn merge_srps_from_dir(
 ) -> io::Result<()> {
     // Scan directory for panel files
     let mut srp_files: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(source_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if super::is_panel_path(&name) {
-                srp_files.push(entry.path());
-            }
+    let entries = std::fs::read_dir(source_dir).map_err(|e| io::Error::new(e.kind(),
+        format!("Cannot read SRP directory {}: {}", source_dir.display(), e)))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| io::Error::new(e.kind(),
+            format!("Cannot read entry in SRP directory {}: {}", source_dir.display(), e)))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if super::is_panel_path(&name) {
+            srp_files.push(entry.path());
         }
     }
 
@@ -1028,4 +1030,24 @@ pub fn merge_srps_from_dir(
     selphi_info!("");
 
     merge_single_chr_srps(&valid, output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_directory_errors_keep_the_path_and_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("not-a-directory");
+        std::fs::write(&file, b"").unwrap();
+        for source in [dir.path().join("missing"), file] {
+            let kind = std::fs::read_dir(&source).err().unwrap().kind();
+            let err = merge_srps_from_dir(&source, &dir.path().join("out")).unwrap_err();
+            assert_eq!(err.kind(), kind);
+            assert!(err.to_string().contains("Cannot read SRP directory") && err.to_string().contains(source.to_str().unwrap()));
+        }
+        let err = merge_srps_from_dir(dir.path(), &dir.path().join("out")).unwrap_err();
+        assert!(err.to_string().contains("No .srp2 or .srp files found"));
+    }
 }

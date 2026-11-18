@@ -48,9 +48,11 @@ impl SrpReader {
         let mut magic = [0u8; 8];
         f.read_exact(&mut magic)?;
         if !super::is_single_chr_magic(&magic) {
-            let hint = if super::is_multi_chr_magic(&magic) {
-                "Detected multi-chromosome SRP file. Use MultiChrSrpReader for multi-chromosome panels."
-            } else if &magic[..2] == b"PK" {
+            if super::is_multi_chr_magic(&magic) {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
+                    format!("{} is a multi-chromosome panel; this step needs a single-chromosome panel (--merge-srps-dir takes single-chromosome panels)", filepath)));
+            }
+            let hint = if &magic[..2] == b"PK" {
                 "Detected old ZIP-based SRP format."
             } else {
                 "Not a valid SRP file."

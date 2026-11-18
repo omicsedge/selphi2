@@ -131,7 +131,7 @@ pub fn build_srp_from_bref3(
     }
 
     selphi_info!("  samples:  {} ({} haplotypes)", n_samples, n_haps);
-    selphi_info!("  variants: {} (chr{}, {}–{})", n_variants, chromosome, min_pos, max_pos);
+    selphi_info!("  variants: {} ({}, {}–{})", n_variants, chromosome, min_pos, max_pos);
     selphi_info!("  chunks:   {} (chunk_size={})", n_chunks, chunk_size);
 
     let contig_field = format!("##contig=<ID={}>", chromosome);
@@ -279,7 +279,7 @@ impl SrpPanelWriter {
         let srp_path = super::helpers::with_panel_suffix(output_path, super::PANEL_EXT);
 
         selphi_info!("  samples:  {} ({} haplotypes)", n_samples, n_haps);
-        selphi_info!("  variants: {} (chr{}, {}–{})", n_variants, chromosome, min_pos, max_pos);
+        selphi_info!("  variants: {} ({}, {}–{})", n_variants, chromosome, min_pos, max_pos);
         selphi_step!("Streaming phased panel → tiles ({} threads)...", rayon::current_num_threads());
 
         let tile_writer = StreamingTileWriter::new(&srp_path, &SrpMetadataForWrite {
@@ -511,7 +511,7 @@ pub fn build_srp_unified(
     }
 
     selphi_info!("  samples:  {} ({} haplotypes)", hdr.n_samples, n_haps);
-    selphi_info!("  variants: {} (chr{}, {}–{})", n_variants, chromosome, min_pos, max_pos);
+    selphi_info!("  variants: {} ({}, {}–{})", n_variants, chromosome, min_pos, max_pos);
     let n_dropped: usize = region_results.iter().map(|r| r.n_skipped_long).sum();
     if n_dropped > 0 {
         selphi_info!("  dropped {} variant(s) with REF/ALT >255 B (--drop-long-alleles)", n_dropped);

@@ -337,7 +337,7 @@ fn load_maps(
                 }
             }
             if !found {
-                selphi_info!("  WARNING: no map found for chr{} in {}", key, dir);
+                selphi_debug!("  No map found for {} in {}", selphi::common::utils::chr_label(key), dir);
             }
         }
         selphi_info!("  maps: {} chromosomes loaded from {}", combined.len(), dir);
@@ -746,11 +746,11 @@ pub fn run_multi_chr(
         if formats.bcf {
             selphi::io::pipeline::setup_bcf_writer(
                 n_samples, &sample_names, all_contig_fields, version, &out_file, config.no_ap, config.gp, &config.header_lines,
-            ).expect("Failed to setup BCF writer")
+            ).unwrap_or_else(|e| { selphi_error!("Failed to setup BCF writer: {}", e); std::process::exit(1) })
         } else {
             selphi::io::pipeline::setup_vcf_writer(
                 &sample_names, all_contig_fields, version, &out_file, config.no_ap, config.gp, &config.header_lines,
-            ).expect("Failed to setup VCF writer")
+            ).unwrap_or_else(|e| { selphi_error!("Failed to setup VCF writer: {}", e); std::process::exit(1) })
         }
     } else {
         let (tx, _rx) = selphi::io::pipeline::output_queue(1);
@@ -795,7 +795,7 @@ pub fn run_multi_chr(
     let mut called_samples = vec![false; n_samples];
     for (chr_idx, chr_name) in chromosomes.iter().enumerate() {
         let chr_start = Instant::now();
-        selphi_info!("  [{}/{}] chr{}", chr_idx + 1, n_chr, chr_name);
+        selphi_info!("  [{}/{}] {}", chr_idx + 1, n_chr, selphi::common::utils::chr_label(chr_name));
 
         // Use prefetched data if available, otherwise load synchronously
         let (srp, wgs_idx, target_idx, mut targ_alleles, raw_chip_cm, chip_bps, n_ref, n_ref_variants, n_chip, nocall, transforms, (matched_idx, uncalled_typed, filled_typed)) =
@@ -1247,7 +1247,7 @@ pub fn run_multi_chr(
                     vcf_tx: &vcf_tx,
                 },
                 &mut dr2_acc,
-            ).expect("Output write failed");
+            ).unwrap_or_else(|e| panic!("Output write failed for {} (disk full or unwritable output): {e}", out_file.display()));
 
             selphi_info!("    Window {}/{}: {} vars", wi + 1, windows.len(), n_var_w);
         }
@@ -1283,7 +1283,7 @@ pub fn run_multi_chr(
             } else {
                 for i in 0..pass.len() { pass.append_vcf(i, 0..n_samples, &mut buf); }
             }
-            if !buf.is_empty() { vcf_tx.send(buf).expect("VCF send failed"); }
+            if !buf.is_empty() { vcf_tx.send(buf).unwrap_or_else(|e| panic!("VCF/BCF output writer stopped for {} (disk full or unwritable output): {e}", out_file.display())); }
             n_out_variants_total += pass.len() as u64;
             selphi_info!("  {}: {} records written as given (not in the panel)", spelling, pass.len());
         }
@@ -1320,7 +1320,7 @@ pub fn run_multi_chr(
 
     let total = start_time.elapsed().as_secs_f64();
     let mem = selphi::log::peak_mem_mb();
-    selphi_info!("\n  Total: {:.0}s | {} chromosomes | Peak: {:.0} MB | {}",
+    selphi_info!("\n  Total: {:.0}s | {} panel chromosomes | Peak: {:.0} MB | {}",
         total, n_chr, mem, out_file.display());
 
     Ok(())

@@ -1343,7 +1343,7 @@ impl<'a> ChannelOut<'a> {
 
     #[inline]
     fn send_now(&self, buf: Vec<u8>) {
-        self.tx.send(buf).expect("VCF send failed");
+        self.tx.send(buf).expect("VCF/BCF output writer stopped (disk full or unwritable output)");
     }
 
     fn flush(&mut self) {

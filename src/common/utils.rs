@@ -23,6 +23,11 @@ pub fn median(sorted: &[f64]) -> f64 {
 ///   panel         + "srp"    -> panel.srp
 ///   panel.vcf.gz  + "vcf.gz" -> panel.vcf.gz         (idempotent, no doubling)
 ///   panel.vcf     + "srp"    -> panel.srp            (a real extension IS replaced)
+/// A contig name for messages: `chr22` stays `chr22`, `22` becomes `chr22` (never `chrchr22`).
+pub fn chr_label(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.starts_with("chr") { name.into() } else { format!("chr{name}").into() }
+}
+
 pub fn out_path(base: &std::path::Path, ext: &str) -> std::path::PathBuf {
     const KNOWN: &[&str] = &["vcf.gz", "vcf", "bcf", "srp2", "srp", "bref3", "pgen", "psam", "pvar",
                              "parquet", "selfdecode.zip", "gz"];
@@ -66,6 +71,13 @@ pub fn same_file(input: &std::path::Path, output: &std::path::Path) -> bool {
 /// the output would replace the input, or truncate it while it is still being
 /// read (the imputation reads the target a second time while writing).
 pub fn refuse_overwrite(inputs: &[&str], outputs: &[std::path::PathBuf]) -> Result<(), crate::Fatal> {
+    // Create each output's folder first: `same_file` can only resolve a path whose folders exist,
+    // and `--out new/../input` must be caught here, before the writers create `new/`.
+    for o in outputs {
+        if let Some(dir) = o.parent() && !dir.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+    }
     for i in inputs {
         if let Some(o) = outputs.iter().find(|o| same_file(std::path::Path::new(i), o)) {
             return Err(crate::Fatal::stderr(2,
@@ -73,6 +85,25 @@ pub fn refuse_overwrite(inputs: &[&str], outputs: &[std::path::PathBuf]) -> Resu
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod refuse_overwrite_tests {
+    #[test]
+    fn output_through_a_new_folder_is_still_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("input.vcf.gz");
+        std::fs::write(&input, b"x").unwrap();
+        let out = tmp.path().join("new").join("..").join("input.vcf.gz");
+        assert!(super::refuse_overwrite(&[input.to_str().unwrap()], &[out]).is_err());
+    }
+
+    #[test]
+    fn chr_label_never_doubles() {
+        assert_eq!(super::chr_label("22"), "chr22");
+        assert_eq!(super::chr_label("chr22"), "chr22");
+        assert_eq!(super::chr_label("chrX"), "chrX");
+    }
 }
 
 #[cfg(test)]

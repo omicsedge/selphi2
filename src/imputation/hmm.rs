@@ -105,15 +105,16 @@ fn prune_diag() -> bool {
     *V.get_or_init(|| crate::config::is_one("SELPHI_PRUNE_DIAG"))
 }
 
-/// Warn (once per process, loudly) that the cutoff/n_sites error-rate
-/// heuristic saturated and the `--p-err` floor was used instead. Runs per
+/// Note (once per process) that the cutoff/n_sites error-rate heuristic
+/// saturated and the `--p-err` floor was used instead: the designed fallback
+/// (b8ee781), e.g. a short last window where every candidate matches. Runs per
 /// target hap per window, so everything past the first hit is one relaxed
 /// atomic add; the count is per (hap × window) occurrence.
 static PERR_SATURATED: AtomicU64 = AtomicU64::new(0);
 fn perr_saturation_warn(raw: f64, min_perr: f64) {
     if PERR_SATURATED.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
         crate::selphi_step!(
-            "WARN: emission error-rate heuristic saturated (match-count cutoff fraction {:.4} > 0.5; small-panel regime) — using the emission floor {} instead",
+            "emission error rate: match-count estimate saturated in a window (cutoff fraction {:.4} > 0.5: few sites, or every candidate haplotype matches) — using the --p-err floor {} there",
             raw, min_perr.max(0.0001));
     }
 }

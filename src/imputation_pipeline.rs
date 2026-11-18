@@ -261,18 +261,18 @@ fn setup_output_writers(
     let parquet = if formats.parquet && !batched {
         let pq_file = selphi::common::utils::out_path(out_path, "parquet");
         Some(selphi::io::parquet_output::setup_parquet_writer(&pq_file, sample_names)
-            .expect("Failed to setup Parquet writer"))
+            .unwrap_or_else(|e| { selphi_error!("Failed to setup Parquet writer: {}", e); std::process::exit(1) }))
     } else { None };
     let pgen = if formats.pgen && !batched {
         let pgen_file = selphi::common::utils::out_path(out_path, "pgen");
-        selphi::io::pgen_output::write_psam(&pgen_file, sample_names).expect("Failed to write .psam");
-        let pvar = selphi::io::pgen_output::write_pvar(&pgen_file).expect("Failed to write .pvar");
-        let pg = selphi::io::pgen_output::PgenWriter::new(&pgen_file, n_samples, max_variants).expect("Failed to create .pgen");
+        selphi::io::pgen_output::write_psam(&pgen_file, sample_names).unwrap_or_else(|e| { selphi_error!("Failed to write .psam: {}", e); std::process::exit(1) });
+        let pvar = selphi::io::pgen_output::write_pvar(&pgen_file).unwrap_or_else(|e| { selphi_error!("Failed to write .pvar: {}", e); std::process::exit(1) });
+        let pg = selphi::io::pgen_output::PgenWriter::new(&pgen_file, n_samples, max_variants).unwrap_or_else(|e| { selphi_error!("Failed to create .pgen: {}", e); std::process::exit(1) });
         Some((pg, pvar))
     } else { None };
     let selfdecode = if formats.selfdecode && !batched {
         Some(selphi::io::selfdecode_output::SelfdecodeWriter::new(out_path, sample_names, false)
-            .expect("Failed to setup SelfDecode writer"))
+            .unwrap_or_else(|e| { selphi_error!("Failed to setup SelfDecode writer: {}", e); std::process::exit(1) }))
     } else { None };
 
     // VCF/BCF channel writer (or dummy when not active / superseded by batched).
@@ -280,11 +280,11 @@ fn setup_output_writers(
         if formats.bcf {
             selphi::io::pipeline::setup_bcf_writer(
                 n_samples, sample_names, contig_field, version, &out_file, no_ap, gp, extra_header,
-            ).expect("Failed to setup BCF writer")
+            ).unwrap_or_else(|e| { selphi_error!("Failed to setup BCF writer: {}", e); std::process::exit(1) })
         } else {
             selphi::io::pipeline::setup_vcf_writer(
                 sample_names, contig_field, version, &out_file, no_ap, gp, extra_header,
-            ).expect("Failed to setup VCF writer")
+            ).unwrap_or_else(|e| { selphi_error!("Failed to setup VCF writer: {}", e); std::process::exit(1) })
         }
     } else {
         let (tx, _rx) = selphi::io::pipeline::output_queue(1);
@@ -310,32 +310,32 @@ fn setup_output_writers(
         batch.bcf = selphi::io::bcf_batch::setup_batch_writers(
             n_haps_total, target_batch_size_haps, &batch_tmp_dir,
             sample_names, contig_field, version, no_ap, extra_header,
-        ).expect("Failed to setup batch writers");
+        ).unwrap_or_else(|e| { selphi_error!("Failed to setup batch writers: {}", e); std::process::exit(1) });
         selphi_info!("  batched: {} batch BCF writers active (batch_size={} haps)", batch.bcf.len(), target_batch_size_haps);
     }
     if batch_active.vcf {
         batch.vcf = selphi::io::vcf_batch::setup_vcf_batch_writers(
             n_haps_total, target_batch_size_haps, &batch_tmp_dir,
             sample_names, contig_field, version, no_ap, extra_header,
-        ).expect("Failed to setup VCF batch writers");
+        ).unwrap_or_else(|e| { selphi_error!("Failed to setup VCF batch writers: {}", e); std::process::exit(1) });
         selphi_info!("  batched: {} batch VCF.gz writers active (batch_size={} haps)", batch.vcf.len(), target_batch_size_haps);
     }
     if batch_active.sd {
         batch.sd = selphi::io::sd_batch::setup_sd_batch_writers(
             n_haps_total, target_batch_size_haps, &batch_tmp_dir, sample_names, false,
-        ).expect("Failed to setup SD batch writers");
+        ).unwrap_or_else(|e| { selphi_error!("Failed to setup SD batch writers: {}", e); std::process::exit(1) });
         selphi_info!("  batched: {} batch SelfDecode writers active", batch.sd.len());
     }
     if batch_active.pgen {
         batch.pgen = selphi::io::pgen_batch::setup_pgen_batch_writers(
             n_haps_total, target_batch_size_haps, &batch_tmp_dir, sample_names, max_variants,
-        ).expect("Failed to setup PGEN batch writers");
+        ).unwrap_or_else(|e| { selphi_error!("Failed to setup PGEN batch writers: {}", e); std::process::exit(1) });
         selphi_info!("  batched: {} batch PGEN writers active", batch.pgen.len());
     }
     if batch_active.parquet {
         batch.parquet = selphi::io::parquet_batch::setup_parquet_batch_writers(
             n_haps_total, target_batch_size_haps, &batch_tmp_dir, sample_names,
-        ).expect("Failed to setup Parquet batch writers");
+        ).unwrap_or_else(|e| { selphi_error!("Failed to setup Parquet batch writers: {}", e); std::process::exit(1) });
         selphi_info!("  batched: {} batch Parquet writers active", batch.parquet.len());
     }
 
@@ -741,7 +741,7 @@ fn finalize_batched_outputs(
         let t = Instant::now();
         selphi::io::bcf_merge::merge_batch_bcfs(
             &batch_paths, out_file, sample_names, contig_field, version, no_ap, gp, extra_header,
-        ).expect("Batch BCF merge failed");
+        ).unwrap_or_else(|e| panic!("Could not merge batch BCF output into {} (disk full or unwritable output): {e}", out_file.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -754,7 +754,7 @@ fn finalize_batched_outputs(
         let t = Instant::now();
         selphi::io::vcf_merge::merge_batch_vcfs(
             &batch_paths, out_file, sample_names, contig_field, version, no_ap, gp, extra_header,
-        ).expect("Batch VCF merge failed");
+        ).unwrap_or_else(|e| panic!("Could not merge batch VCF output into {} (disk full or unwritable output): {e}", out_file.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -766,7 +766,9 @@ fn finalize_batched_outputs(
         let sd_out = out_path.to_path_buf();
         selphi_info!("  Merging {} batch SelfDecode ZIPs → {} ...", batch_paths.len(), sd_out.display());
         let t = Instant::now();
-        selphi::io::sd_merge::merge_batch_sds(&batch_paths, &sd_out).expect("Batch SD merge failed");
+        selphi::io::sd_merge::merge_batch_sds(&batch_paths, &sd_out)
+            .unwrap_or_else(|e| panic!("Could not merge batch SelfDecode output into {} (disk full or unwritable output): {e}",
+                selphi::common::utils::out_path(&sd_out, "selfdecode.zip").display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -779,7 +781,7 @@ fn finalize_batched_outputs(
         selphi_info!("  Merging {} batch PGENs → {} ...", batch_paths.len(), pgen_out.display());
         let t = Instant::now();
         selphi::io::pgen_merge::merge_batch_pgens(&batch_paths, out_path, sample_names)
-            .expect("Batch PGEN merge failed");
+            .unwrap_or_else(|e| panic!("Could not merge batch PGEN output into {} (disk full or unwritable output): {e}", pgen_out.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for (p, v) in &batch_paths { let _ = std::fs::remove_file(p); let _ = std::fs::remove_file(v); }
         for (p, _) in &batch_paths { let _ = std::fs::remove_file(selphi::common::utils::out_path(p, "psam")); }
@@ -793,7 +795,7 @@ fn finalize_batched_outputs(
         selphi_info!("  Merging {} batch Parquets → {} ...", batch_paths.len(), parquet_out.display());
         let t = Instant::now();
         selphi::io::parquet_merge::merge_batch_parquets(&batch_paths, &parquet_out, sample_names)
-            .expect("Batch Parquet merge failed");
+            .unwrap_or_else(|e| panic!("Could not merge batch Parquet output into {} (disk full or unwritable output): {e}", parquet_out.display()));
         selphi_info!("  Merged in {:.1}s", t.elapsed().as_secs_f64());
         for p in &batch_paths { let _ = std::fs::remove_file(p); }
     }
@@ -1287,8 +1289,8 @@ pub fn run(args: &Args, target_path: &str, output_path: &str) {
     // Keep the unphased target for the extra independent chains (phasing consumes
     // a phased copy into `targ_alleles`).
     let unphased_for_ensemble = if indep_chain > 1 { Some(targ_alleles.clone()) } else { None };
-    if ensemble_n > 1 {
-        selphi_step!("Phase-ensemble: {} members (seeds {}..{})", ensemble_n, args.seed, args.seed + ensemble_n as i64 - 1);
+    if indep_chain > 1 {
+        selphi_step!("Phase-ensemble: {} independent chains (seeds {}..{})", indep_chain, args.seed, args.seed + indep_chain as i64 - 1);
     }
     if needs_phasing {
         if !is_phased {
@@ -1335,7 +1337,7 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
                 &pr.phased_alleles, &target_markers, &target_idx, &wgs_idx,
                 &sample_names, n_chip, n_haps, &allele_transforms, &out_path,
                 passthrough.as_ref(), pr.phase_quality.as_deref(), &args.header_line, &contig_field,
-            ).expect("Failed to write phased VCF");
+            ).unwrap_or_else(|e| { selphi_error!("Failed to write phased VCF: {}", e); std::process::exit(1) });
             selphi_step!("Phase-only VCF: {}", out_path.display());
             selphi_info!("\nTotal: {:.0}s | Peak memory: {:.0} MB",
                 start_time.elapsed().as_secs_f64(), selphi::log::peak_mem_mb());
@@ -1503,18 +1505,13 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
     // Load optional ancestry context for PBWT candidate reweighting.
     let panel_anc: Option<Vec<u8>> = args.panel_ancestry.as_deref().map(|p| {
         selphi::imputation::ancestry::load_panel_ancestry(Path::new(p), &srp.sample_ids)
-            .expect("Failed to parse --panel-ancestry TSV")
+            .unwrap_or_else(|e| { selphi_error!("Failed to parse --panel-ancestry TSV: {}", e); std::process::exit(1) })
     });
     let target_anc: Option<Vec<f32>> = args.target_ancestry.as_deref().map(|p| {
         selphi::imputation::ancestry::load_target_ancestry(Path::new(p), &sample_names)
-            .expect("Failed to parse --target-ancestry TSV")
+            .unwrap_or_else(|e| { selphi_error!("Failed to parse --target-ancestry TSV: {}", e); std::process::exit(1) })
     });
     let ancestry_active = panel_anc.is_some() && target_anc.is_some();
-    if ancestry_active {
-        selphi_step!("Ancestry-aware PBWT active (strength={:.2})", args.ancestry_strength);
-    } else if (panel_anc.is_some() || target_anc.is_some()) && !(args.local_ancestry && panel_anc.is_some()) {
-        selphi_info!("  Note: --panel-ancestry needs --local-ancestry (or --target-ancestry with --precompute-candidates) to reweight candidates; running baseline.");
-    }
 
     // Per-window candidate selection is the default. Each window picks its
     // own top-K from window-local PBWT coded steps so segment-specific haps
@@ -1538,12 +1535,16 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
         }),
         _ => None,
     };
-    if cand_ancestry.is_some() && precomputed_candidates.is_none() {
+    if precomputed_candidates.is_some() && (ancestry_active || cand_ancestry.is_some()) {
+        selphi_step!("Ancestry-aware PBWT active (strength={:.2})", args.ancestry_strength);
+    } else if cand_ancestry.is_some() && precomputed_candidates.is_none() {
         selphi_step!("Ancestry prior on the per-window candidate ranking (strength {:.2}, smooth r={})",
             args.ancestry_strength, args.local_ancestry_smooth);
         if args.export_local_ancestry {
             selphi_info!("  Note: --export-local-ancestry writes the chromosome-level estimate of --precompute-candidates; the per-window estimates are not exported.");
         }
+    } else if panel_anc.is_some() || target_anc.is_some() {
+        selphi_info!("  Note: ancestry weighting needs --panel-ancestry with --local-ancestry, or both ancestry TSVs with active chromosome-level candidate precomputation; running baseline.");
     }
 
     // ref_bm_imp stays alive for per-window imputation extraction.
@@ -1942,7 +1943,7 @@ when it agrees with the re-phased one (--keep-input-phase imputes on the given p
                 vcf_tx: &vcf_tx,
             },
             &mut dr2_acc,
-        ).expect("Output write failed");
+        ).unwrap_or_else(|e| panic!("Output write failed for {} (disk full or unwritable output): {e}", out_path.display()));
         }
 
         let interp_secs = t0_interp.elapsed().as_secs_f64();

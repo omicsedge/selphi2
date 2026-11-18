@@ -1519,7 +1519,7 @@ pub fn process_window_hmm(
             let batch_refs: Vec<&super::hmm::CsrWeights> = batch_weights.iter()
                 .map(|w| &w[0].1).collect();
             cb(batch_start, batch_end, &batch_refs)
-                .expect("on_batch_done callback failed");
+                .expect("Batch output write failed (disk full or unwritable output or temporary directory)");
             // batch_weights goes out of scope → CSRs dropped here
         } else if sink.is_none() {
             all_weights.extend(batch_results.into_iter().map(|d| d.weights.expect("collected weights are kept")));

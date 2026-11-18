@@ -530,7 +530,7 @@ fn parse_pl_bcf(path: &str, hash_alleles_against_srp: bool, keep: Option<&BlockS
 
     let Body { markers, gl3, n_variants_seen, n_missing_pl, haploid_samples, blocks } = body;
     selphi_info!(
-        "  PL BCF: {} samples, {} variants ({} sample-sites with missing/malformed PL → flat 0.5/0.5){}{}",
+        "  PL BCF: {} samples, {} variants ({} sample-sites with missing/malformed PL → flat genotype likelihoods [1/3, 1/3, 1/3]){}{}",
         n_samples, n_variants_seen, n_missing_pl, blocks_note(&blocks), gq_note(gq),
     );
     Ok(PlVcfResult { gl3, markers, sample_ids, haploid_samples, blocks })
@@ -693,7 +693,7 @@ pub fn parse_pl_vcf(path: &str, hash_alleles_against_srp: bool, keep: Option<&Bl
         return Err(std::io::Error::other(format!("No samples in PL VCF {path}")));
     }
     selphi_info!(
-        "  PL VCF: {} samples, {} variants ({} sample-sites with missing/malformed PL → flat 0.5/0.5){}{}",
+        "  PL VCF: {} samples, {} variants ({} sample-sites with missing/malformed PL → flat genotype likelihoods [1/3, 1/3, 1/3]){}{}",
         sample_names.len(), n_variants_seen, n_missing_pl, blocks_note(&blocks), gq_note(gq),
     );
 

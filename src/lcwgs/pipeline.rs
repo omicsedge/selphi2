@@ -1177,18 +1177,43 @@ fn run_lcwgs_bam_inner(
     });
     let depth = depth_span.zip(bamgl.depth).map(|(r, count)| ReadDepth::new(r.start, n_samples, count));
     // Read-pair fragments, per sample, unless its median depth is above the gate.
-    let links = link_cfg.filter(|_| bamgl.linkage.len() == n_samples).map(|cfg| Links {
-        cfg,
-        samples: bamgl.linkage.into_iter().zip(&bamgl.sample_ids).map(|(l, id)| {
+    let links = link_cfg.filter(|_| bamgl.linkage.len() == n_samples).map(|cfg| {
+        let (mut frags, mut depths, mut gated) = (Vec::new(), Vec::new(), 0usize);
+        let samples = bamgl.linkage.into_iter().zip(&bamgl.sample_ids).map(|(l, id)| {
             let on = l.median_depth as usize <= cfg.max_depth;
-            crate::selphi_info!("  lcWGS read-pair linkage: {}: {} read pairs over >= 2 SNP sites, median depth {}{}",
+            let line = format!("  lcWGS read-pair linkage: {}: {} read pairs over >= 2 SNP sites, median depth {}{}",
                 id, l.n_frag(), l.median_depth, if on { "" } else { ": above the gate, not linked" });
+            if n_samples == 1 { crate::selphi_info!("{}", line); } else { crate::selphi_debug!("{}", line); }
+            frags.push(l.n_frag());
+            depths.push(l.median_depth);
+            gated += usize::from(!on);
             on.then_some(l)
-        }).collect(),
+        }).collect();
+        if n_samples > 1 { log_linkage_summary(&mut frags, &depths, gated); }
+        Links { cfg, samples }
     });
     // bamgl.gl3 is already in panel-shared order → shared imputation tail.
     let out = impute_from_gl3(srp, &wgs_idx, bamgl.gl3, n_samples, bamgl.sample_ids, &[], map_path, params, prepared, passengers, links)?;
     Ok((out, depth))
+}
+
+/// Median of sorted counts; an even count takes the mean of the two middle values (rounded).
+fn median(sorted: &[usize]) -> usize {
+    let n = sorted.len();
+    if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2]).div_ceil(2) }
+}
+
+/// One line for a cohort's read-pair linkage: the range and median of read pairs over >= 2 SNP sites
+/// and the range of median depths (per sample with --debug).
+fn log_linkage_summary(frags: &mut [usize], depths: &[u32], gated: usize) {
+    frags.sort_unstable();
+    let (Some(&lo), Some(&hi)) = (frags.first(), frags.last()) else { return };
+    let (Some(&dlo), Some(&dhi)) = (depths.iter().min(), depths.iter().max()) else { return };
+    let fmt = |v: usize| crate::log::fmt_thousands(v as u64);
+    let depth = if dlo == dhi { format!("{dlo}") } else { format!("{dlo}-{dhi}") };
+    crate::selphi_info!("  lcWGS read-pair linkage: {} samples, {}-{} read pairs over >= 2 SNP sites (median {}), median depth {}{} (per sample with --debug)",
+        frags.len(), fmt(lo), fmt(hi), fmt(median(frags)), depth,
+        if gated > 0 { format!("; {gated} above the depth gate, not linked") } else { String::new() });
 }
 
 /// How the `--bam` path treats the panel's indel sites.
@@ -1663,11 +1688,18 @@ fn run_chunked_gibbs(
     let default_budget = baseline_memory_budget(n_shared, srp.metadata.n_haps, n_samples,
         n_chunks, threads, shared, host_allowance);
     let explicit_budget = crate::config::f64_opt("LCWGS_MEM_BUDGET_GB").map(|gb| {
-        assert!(gb.is_finite() && gb > 0.0, "LCWGS_MEM_BUDGET_GB must be positive and finite");
+        if !gb.is_finite() || gb <= 0.0 {
+            crate::selphi_error!("LCWGS_MEM_BUDGET_GB={} must be positive and finite", gb);
+            std::process::exit(1);
+        }
         (gb * 1e9) as usize
     });
     let limit = explicit_budget.unwrap_or(default_budget);
-    assert!(limit > shared, "lcWGS memory budget must exceed shared process storage");
+    if limit <= shared {
+        crate::selphi_error!("lcWGS memory budget {} bytes ({:.3} GB) must exceed shared process storage of {} bytes ({:.3} GB); increase LCWGS_MEM_BUDGET_GB",
+            limit, limit as f64 / 1e9, shared, shared as f64 / 1e9);
+        std::process::exit(1);
+    }
     let memory = (n_samples <= 1).then(|| {
         let budget = super::memory::MemoryBudget::new(limit, shared);
         if explicit_budget.is_some() { budget } else { budget.lenient() }
@@ -1693,7 +1725,8 @@ fn run_chunked_gibbs(
     let n_chains = super::iterate::gibbs_chains(params);
     let concurrent = split_band.is_some() && split_concurrent(single_sample, selector, n_chains);
     if concurrent {
-        crate::selphi_info!("  lcWGS SPLIT: the two passes of a chunk run at the same time, sharing its panel side and each selection sweep's panel decode (LCWGS_SPLIT_SERIAL=1: one after the other, same output)");
+        crate::selphi_info!("  lcWGS SPLIT: the two passes of each chunk run at the same time (details with --debug)");
+        crate::selphi_debug!("  lcWGS SPLIT: the two passes of a chunk run at the same time, sharing its panel side and each selection sweep's panel decode (LCWGS_SPLIT_SERIAL=1: one after the other, same output)");
     }
     // Resident sites per chunk (active + its passengers), and whether its two SPLIT
     // passes may run at the same time: charged as two chains, which an explicit
@@ -2519,5 +2552,15 @@ mod tests {
             assert!(!d.is_nan(), "dose {} at v={} is NaN", d, v);
             assert!((0.0..=2.0).contains(&d), "dose {} at v={} out of range", d, v);
         }
+    }
+}
+
+#[cfg(test)]
+mod linkage_summary_tests {
+    #[test]
+    fn median_of_even_and_odd_counts() {
+        assert_eq!(super::median(&[10, 90]), 50);
+        assert_eq!(super::median(&[1, 2, 9]), 2);
+        assert_eq!(super::median(&[7]), 7);
     }
 }
