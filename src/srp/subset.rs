@@ -3,8 +3,9 @@
 //! `--include-samples` keeps the listed samples, `--exclude-samples` drops them. The output keeps
 //! the panel's own sample order, every site (also sites no kept haplotype carries), the original
 //! variant IDs and the `##contig` line. Unknown IDs and an empty result are errors: a silently
-//! ignored ID would leave a held-out sample in the panel. The file is written under a temporary
-//! name and renamed when complete, so a failure never leaves a truncated panel at `--out`.
+//! ignored ID would leave a held-out sample in the panel. The file is written in a fresh hidden
+//! directory next to `--out` and renamed into place when complete; the directory is removed on
+//! any error or panic, so neither a truncated panel nor a stray `.srp2` is left behind.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -54,23 +55,40 @@ pub fn subset_output_path(output: &str) -> PathBuf {
     super::helpers::with_panel_suffix(Path::new(output), super::PANEL_EXT)
 }
 
+/// True when `a` and `b` both exist and are the same file (same device and inode: hard and soft
+/// links included), which a path comparison misses.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+        _ => false,
+    }
+}
+
 /// Writes `output` (.srp2) holding only the selected samples of the single-chromosome panel `source`.
 /// Returns (samples kept, samples in the source).
 pub fn subset_panel_samples(source: &Path, output: &Path, list: &[String], mode: SampleSelection)
     -> Result<(usize, usize), String> {
     let output = super::helpers::with_panel_suffix(output, super::PANEL_EXT);
-    let name = output.file_name().and_then(|n| n.to_str()).ok_or("--out has no file name")?;
-    let tmp = output.with_file_name(format!(".{}.{}.partial.{}", name, std::process::id(), super::PANEL_EXT));
-    let result = write_subset(source, &tmp, list, mode)
-        .and_then(|counts| std::fs::rename(&tmp, &output).map(|_| counts)
-            .map_err(|e| format!("cannot move the new panel to {}: {}", output.display(), e)));
-    if result.is_err() { let _ = std::fs::remove_file(&tmp); }
-    result
+    let name = output.file_name().ok_or("--out has no file name")?;
+    if same_file(source, &output) {
+        return Err(format!("{} is the source panel itself", output.display()));
+    }
+    let parent = output.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    // Removed when dropped, also on a panic; panel directory scans do not enter it.
+    let tmp_dir = tempfile::Builder::new().prefix(".selphi-subset-").tempdir_in(parent)
+        .map_err(|e| format!("cannot create a temporary folder in {}: {}", parent.display(), e))?;
+    let tmp = tmp_dir.path().join(name);
+    let counts = write_subset(source, &tmp, list, mode)?;
+    std::fs::rename(&tmp, &output).map_err(|e| format!("cannot move the new panel to {}: {}", output.display(), e))?;
+    Ok(counts)
 }
 
 fn write_subset(source: &Path, output: &Path, list: &[String], mode: SampleSelection) -> Result<(usize, usize), String> {
     let mut reader = SrpReader::open(source, 0).map_err(|e| e.to_string())?;
-    reader.load_tiled();
+    if !reader.load_tiled() {
+        return Err(format!("{} is not a tiled panel; rebuild it with --prepare-reference-from", source.display()));
+    }
     let kept = kept_sample_indices(&reader.sample_ids, list, mode)?;
     let n_var = reader.n_variants();
     let chrom = reader.chromosome().to_string();
@@ -106,12 +124,13 @@ fn write_subset(source: &Path, output: &Path, list: &[String], mode: SampleSelec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::srp::writer::build_srp_from_panel;
 
     /// A panel of `n_samples` on chr22 where hap h carries ALT at variant v when (31v + 7h) % 5 == 0;
     /// every third site has an rsID, one site has a long REF, and the contig line carries a length.
     fn panel(dir: &Path, n_var: usize, n_samples: usize) -> (PathBuf, Vec<u8>) {
         let n_haps = 2 * n_samples;
-        let phased: Vec<u8> = (0..n_var * n_haps).map(|i| ((i / n_haps * 31 + i % n_haps * 7) % 5 == 0) as u8).collect();
+        let phased: Vec<u8> = (0..n_var * n_haps).map(|i| (i / n_haps * 31 + i % n_haps * 7).is_multiple_of(5) as u8).collect();
         let chroms = vec!["22".to_string(); n_var];
         let refs: Vec<String> = (0..n_var).map(|v| if v == 7 { "ACGTACGTAC".into() } else { "A".into() }).collect();
         let alts = vec!["C".to_string(); n_var];
@@ -188,17 +207,56 @@ mod tests {
         assert_eq!(left, [std::ffi::OsString::from("panel.srp2")]);
     }
 
-    /// A hard link to the source at --out is replaced, not written through: the source keeps its bytes.
+    /// A hard link to the source at --out is the source: refused, and the source keeps its bytes.
     #[test]
-    fn a_hard_link_to_the_source_at_out_does_not_change_the_source() {
+    fn a_hard_link_to_the_source_at_out_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let (src, _) = panel(dir.path(), 50, 3);
         let before = std::fs::read(&src).unwrap();
         let link = dir.path().join("link.srp2");
         std::fs::hard_link(&src, &link).unwrap();
-        subset_panel_samples(&src, &link, &["S1".into()], SampleSelection::Exclude).unwrap();
+        assert!(subset_panel_samples(&src, &link, &["S1".into()], SampleSelection::Exclude).is_err());
         assert_eq!(std::fs::read(&src).unwrap(), before);
-        assert_ne!(std::fs::read(&link).unwrap(), before);
+    }
+
+    /// A failure after the panel is written (here the rename, --out being a folder) is an error and
+    /// leaves nothing next to --out.
+    #[test]
+    fn a_failed_rename_is_an_error_and_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (src, _) = panel(dir.path(), 50, 3);
+        let out = dir.path().join("taken.srp2");
+        std::fs::create_dir(&out).unwrap();
+        std::fs::write(out.join("keep"), "x").unwrap();
+        let err = subset_panel_samples(&src, &out, &["S1".into()], SampleSelection::Exclude).unwrap_err();
+        assert!(err.contains("cannot move"), "{err}");
+        let mut left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        left.sort();
+        assert_eq!(left, [std::ffi::OsString::from("panel.srp2"), "taken.srp2".into()]);
+    }
+
+    /// A container whose sites name two chromosomes is refused rather than relabelled.
+    #[test]
+    fn a_panel_with_two_chromosomes_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let chroms = ["21".to_string(), "21".to_string(), "22".to_string()];
+        let (a, c) = ("A".to_string(), "C".to_string());
+        let pvs: Vec<PanelVariant> = (0..3).map(|v| PanelVariant {
+            chrom: &chroms[v], pos: 100 + v as i64, ref_allele: &a, alt_allele: &c, id: ".",
+        }).collect();
+        let src = dir.path().join("mixed.srp2");
+        build_srp_from_panel(&[0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1], &pvs, &["S0".into(), "S1".into()], 4, &src).unwrap();
+        let err = subset_panel_samples(&src, &dir.path().join("o.srp2"), &["S1".into()], SampleSelection::Exclude).unwrap_err();
+        assert!(err.contains("more than one chromosome"), "{err}");
+    }
+
+    #[test]
+    fn the_source_itself_at_out_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let (src, _) = panel(dir.path(), 10, 3);
+        let before = std::fs::read(&src).unwrap();
+        assert!(subset_panel_samples(&src, &src, &["S1".into()], SampleSelection::Exclude).is_err());
+        assert_eq!(std::fs::read(&src).unwrap(), before);
     }
 
     #[test]

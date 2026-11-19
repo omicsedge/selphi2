@@ -779,7 +779,14 @@ run per chromosome with a single-chr .srp2, or drop --phase-only");
             };
             let output = subset::subset_output_path(out);
             let log_path = selphi::common::utils::out_path(&output, "log");
-            selphi::common::utils::refuse_overwrite(&[source], &[output.clone(), log_path.clone()]).unwrap_or_else(|f| exit_with(&f));
+            selphi::common::utils::refuse_overwrite(&[source, list_path], &[output.clone(), log_path.clone()]).unwrap_or_else(|f| exit_with(&f));
+            // Hard links escape the path check above: compare file identity before the log is opened.
+            for o in [&output, &log_path] {
+                if [source.as_str(), list_path].iter().any(|i| subset::same_file(Path::new(i), o)) {
+                    eprintln!("error: {} is the same file as an input", o.display());
+                    std::process::exit(2);
+                }
+            }
             selphi::log::init(&log_path, args.debug);
             selphi::log::print_banner(env!("CARGO_PKG_VERSION"));
             let what = if mode == SampleSelection::Include { "keep" } else { "drop" };
