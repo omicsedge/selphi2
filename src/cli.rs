@@ -308,6 +308,16 @@ pub struct Args {
     #[arg(long, alias = "prepare_reference_from", alias = "prepare-reference-from")]
     pub prepare_reference_from: Option<String>,
 
+    /// With --prepare-reference-from <panel.srp2> --out <new.srp2>: keep only the samples listed in
+    /// this file (one ID per line). Sample order and every site of the source panel are kept.
+    #[arg(long, requires = "prepare_reference_from", conflicts_with = "exclude_samples")]
+    pub include_samples: Option<String>,
+
+    /// With --prepare-reference-from <panel.srp2> --out <new.srp2>: drop the samples listed in this
+    /// file (one ID per line). Sample order and every site of the source panel are kept.
+    #[arg(long, requires = "prepare_reference_from")]
+    pub exclude_samples: Option<String>,
+
     /// Directory with per-chr reference panels (chr{N}.srp2; .srp from earlier builds too).
     /// Enables multi-chromosome mode: auto-discovers panels, splits input by
     /// contig, imputes each, and concatenates into a single output.
