@@ -247,6 +247,18 @@ impl SrpPanelWriter {
         n_haps: usize,
         output_path: &Path,
     ) -> Result<Self, SrpWriterError> {
+        Self::new_with_contig_field(variants, sample_names, n_haps, output_path, None)
+    }
+
+    /// As [`new`](Self::new), with the panel's `##contig` line given (a source panel's own, length
+    /// included) instead of the bare `##contig=<ID=chrom>`.
+    pub fn new_with_contig_field(
+        variants: &[PanelVariant],
+        sample_names: &[String],
+        n_haps: usize,
+        output_path: &Path,
+        contig_field: Option<&str>,
+    ) -> Result<Self, SrpWriterError> {
         let n_variants = variants.len();
         if n_variants == 0 { return Err(SrpWriterError::NoVariants); }
         let n_samples = n_haps / 2;
@@ -274,7 +286,7 @@ impl SrpPanelWriter {
         for ci in 0..n_chunks {
             row_counts.push(if ci < n_chunks - 1 { chunk_size } else { n_variants - (n_chunks - 1) * chunk_size });
         }
-        let contig_field = format!("##contig=<ID={}>", chromosome);
+        let contig_field = contig_field.map_or_else(|| format!("##contig=<ID={}>", chromosome), str::to_string);
 
         let srp_path = super::helpers::with_panel_suffix(output_path, super::PANEL_EXT);
 

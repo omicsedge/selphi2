@@ -226,6 +226,12 @@ fn main() {
         }
     }
 
+    // The sample lists only apply to --prepare-reference-from, which runs after these two modes.
+    if (args.include_samples.is_some() || args.exclude_samples.is_some()) && (args.phase_panel || args.lcwgs) {
+        eprintln!("error: --include-samples / --exclude-samples only go with --prepare-reference-from, not with --phase-panel or --lcwgs");
+        std::process::exit(2);
+    }
+
     // --- De-novo panel phasing mode ---
     if args.phase_panel {
         let input = args.input.as_deref()
@@ -759,6 +765,47 @@ run per chromosome with a single-chr .srp2, or drop --phase-only");
     }
 
     if let Some(ref source) = args.prepare_reference_from {
+        // Sample subset of one .srp2, SRP to SRP. Checked first so the lists are never ignored.
+        if let Some(list_path) = args.include_samples.as_deref().or(args.exclude_samples.as_deref()) {
+            use selphi::srp::subset::{self, SampleSelection};
+            let mode = if args.include_samples.is_some() { SampleSelection::Include } else { SampleSelection::Exclude };
+            if !selphi::srp::is_panel_path(source) || Path::new(source).is_dir() {
+                eprintln!("error: --include-samples / --exclude-samples take one single-chromosome .srp2 panel (for VCF/BCF use bcftools view -S)");
+                std::process::exit(2);
+            }
+            let Some(out) = args.out.as_deref() else {
+                eprintln!("error: --include-samples / --exclude-samples need --out <new panel>.srp2");
+                std::process::exit(2);
+            };
+            let output = subset::subset_output_path(out);
+            let log_path = selphi::common::utils::out_path(&output, "log");
+            selphi::common::utils::refuse_overwrite(&[source, list_path], &[output.clone(), log_path.clone()]).unwrap_or_else(|f| exit_with(&f));
+            // Hard links escape the path check above: compare file identity before the log is opened.
+            for o in [&output, &log_path] {
+                if [source.as_str(), list_path].iter().any(|i| subset::same_file(Path::new(i), o)) {
+                    eprintln!("error: {} is the same file as an input", o.display());
+                    std::process::exit(2);
+                }
+            }
+            selphi::log::init(&log_path, args.debug);
+            selphi::log::print_banner(env!("CARGO_PKG_VERSION"));
+            let what = if mode == SampleSelection::Include { "keep" } else { "drop" };
+            selphi_info!("  mode:     sample subset (SRP → SRP, {} the listed samples)", what);
+            selphi_info!("  source:   {}", source);
+            selphi_info!("  list:     {}", list_path);
+            selphi_info!("  output:   {}\n", output.display());
+            let start_time = Instant::now();
+            let result = subset::read_sample_list(Path::new(list_path))
+                .and_then(|list| subset::subset_panel_samples(Path::new(source), &output, &list, mode));
+            match result {
+                Ok((kept, total)) => selphi_info!("  samples:  {} of {} kept", kept, total),
+                Err(e) => { selphi_error!("sample subset failed: {}", e); std::process::exit(1); }
+            }
+            selphi_info!("\nTotal: {:.0}s | Peak memory: {:.0} MB",
+                start_time.elapsed().as_secs_f64(), selphi::log::peak_mem_mb());
+            return;
+        }
+
         // Directory mode: scan for per-chr BCF/VCF → build multi-chr SRP
         if Path::new(source).is_dir() {
             let output = args.out.as_deref().unwrap_or("panel");
