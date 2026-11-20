@@ -1855,15 +1855,56 @@ pub fn select_candidates_nocall(
     for &h in &candidates { seen[h as usize] = false; }
     TL_SEEN2.with(|c| { *c.borrow_mut() = seen; });
     if candidates.len() > max_candidates {
-        let mut scores = vec![0u32; n_ref];
+        let rank = cut_ranking();
+        let mut scores = vec![0.0f32; n_ref];
         for s in 0..n_steps {
-            for_members(s, &mut |h| { if (h as usize) < n_ref { scores[h as usize] += 1; } });
+            let mut n = 0u32;
+            if rank == CutRanking::Idf { for_members(s, &mut |h| { if (h as usize) < n_ref { n += 1; } }); }
+            let ws = rank.weight(n);
+            for_members(s, &mut |h| { if (h as usize) < n_ref { scores[h as usize] += ws; } });
         }
-        candidates.sort_unstable_by(|&a, &b| scores[b as usize].cmp(&scores[a as usize]));
+        candidates.sort_unstable_by(|&a, &b| scores[b as usize].partial_cmp(&scores[a as usize]).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(max_candidates);
     }
     candidates.sort_unstable();
     candidates
+}
+
+/// How candidates are ranked when they are cut to `max_candidates`.
+///
+/// `Idf` (default): each step a haplotype shares with the target counts 1 / the size of that
+/// shared group, so a haplotype sharing a pattern few others share (a minority-ancestry segment,
+/// a rare-allele carrier) outranks one that only shares common patterns. Ranking by the raw count
+/// (`Count`, `SELPHI_MC_SCORE=count`) dropped those: on a 69,164-haplotype panel the auto
+/// cut (~23,700) cost 680 admixed 1000 Genomes people 0.031 R2 on chr20 and 0.030 on chr22, which
+/// Idf recovers at the same cut (within 0.0003 of keeping every haplotype); 801 other 1000 Genomes
+/// people are unchanged (within 0.0002). Only the cut changes: when every candidate fits, the
+/// output is identical.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CutRanking { Count, Idf }
+
+impl CutRanking {
+    fn weight(self, group_size: u32) -> f32 {
+        match (self, group_size) {
+            (CutRanking::Count, _) => 1.0,
+            (CutRanking::Idf, 0) => 0.0,
+            (CutRanking::Idf, n) => 1.0 / n as f32,
+        }
+    }
+
+    /// The weight of step `s` for the target's group (its size is counted only for Idf).
+    fn step_weight(self, coded: &CodedSteps, s: usize, target_hap: usize, n_ref: usize) -> f32 {
+        if self == CutRanking::Count { return 1.0; }
+        let mut n = 0u32;
+        coded.for_each_member(s, target_hap, |h| { if (h as usize) < n_ref { n += 1; } });
+        self.weight(n)
+    }
+}
+
+/// `SELPHI_MC_SCORE=count` restores the raw-count ranking; anything else is Idf.
+fn cut_ranking() -> CutRanking {
+    static R: std::sync::OnceLock<CutRanking> = std::sync::OnceLock::new();
+    *R.get_or_init(|| if crate::config::raw("SELPHI_MC_SCORE").as_deref() == Some("count") { CutRanking::Count } else { CutRanking::Idf })
 }
 
 /// Variant with ancestry-aware rescoring.
@@ -1920,7 +1961,10 @@ pub fn select_candidates_weighted(
     if need_sort {
         let mut scores = vec![0.0f32; n_ref];
         let use_local = ancestry.map(|a| a.local.is_some()).unwrap_or(false);
+        // Only a cut needs the rarity weight; ancestry's own ordering keeps raw counts otherwise.
+        let rank = if candidates.len() > max_candidates { cut_ranking() } else { CutRanking::Count };
         for s in 0..n_steps {
+            let ws = rank.step_weight(coded, s, target_hap, n_ref);
             coded.for_each_member(s, target_hap, |h| {
                 if (h as usize) < n_ref {
                     let w = match ancestry {
@@ -1928,7 +1972,7 @@ pub fn select_candidates_weighted(
                         Some(a) if use_local => a.score_local(tgt_local, h, s),
                         Some(a) => a.score(tgt_local, h),
                     };
-                    scores[h as usize] += w;
+                    scores[h as usize] += w * ws;
                 }
             });
         }
@@ -2172,7 +2216,10 @@ fn legacy_build(
                         if cand.len() > mc {
                             let mut scores = vec![0.0f32; n_ref];
                             for s in 0..groups.len() {
-                                for &h in &groups[s][hg[s][n_ref + t] as usize] { if (h as usize) < n_ref { scores[h as usize] += 1.0; } }
+                                // default ranking: each shared step weighs 1 / the shared group's size
+                                let g = &groups[s][hg[s][n_ref + t] as usize];
+                                let size = g.iter().filter(|&&h| (h as usize) < n_ref).count();
+                                for &h in g { if (h as usize) < n_ref { scores[h as usize] += 1.0 / size as f32; } }
                             }
                             cand.sort_unstable_by(|&x, &y| scores[y as usize].partial_cmp(&scores[x as usize]).unwrap_or(std::cmp::Ordering::Equal));
                             cand.truncate(mc);
@@ -2184,5 +2231,36 @@ fn legacy_build(
                 let _ = HashMap::<u64, u32>::new();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cut_ranking_tests {
+    use super::*;
+
+    /// Haplotype 11 carries the target's alleles over the first half (ALT at sites 0-4, which no
+    /// other haplotype carries) and differs from it over the second half, where haplotypes 0-10
+    /// match it. Counting shared steps ranks 11 last; cut to 5, the default ranking keeps it because
+    /// it alone shares the target's rare pattern.
+    #[test]
+    fn a_haplotype_sharing_a_rare_pattern_survives_the_cut() {
+        let (n_ref, n_var, n_haps) = (12usize, 20usize, 1usize);
+        let alt = |site: usize, hap: usize| hap == 11 && !(5..10).contains(&site);
+        let bm = crate::common::HaplotypeBitmatrix::from_panel(n_var, n_ref, &alt, &vec![true; n_var]);
+        let targ: Vec<u8> = (0..n_var).map(|v| (v < 5) as u8).collect();
+        let chip_cm: Vec<f64> = (0..n_var).map(|i| i as f64 * 0.01).collect();
+        let coded = build_coded_steps_bm(&bm, 0, n_var, n_ref, &targ, n_haps, &chip_cm, 0.05);
+        let mut shared = vec![0usize; n_ref];
+        let mut alone = false;
+        for st in 0..coded.n_steps() {
+            let mut g = Vec::new();
+            coded.for_each_member(st, n_ref, |h| g.push(h));
+            alone |= g == [11];
+            for h in g { shared[h as usize] += 1; }
+        }
+        assert!(alone && shared[11] < shared[0], "the fixture must make 11 rare-but-few: {shared:?}");
+        let kept = select_candidates(&coded, n_ref, n_ref, 5);
+        assert_eq!(kept.len(), 5);
+        assert!(kept.contains(&11), "{kept:?}");
     }
 }
