@@ -37,7 +37,10 @@ rustflags = ["-C", "target-cpu=apple-m1"]
 #   cargo build --release --target x86_64-unknown-linux-musl
 [target.x86_64-unknown-linux-musl]
 linker = "musl-gcc"
-rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+crt-static"]
+# relocation-model=static: a plain static executable. Without it the ubuntu-22.04 musl-gcc
+# (1.2.2) linked the static-pie request as a dynamic PIE that asks for /lib/ld-musl-x86_64.so.1
+# and crashes on start where that loader is missing (the 2.0.0-rc6 CI build).
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+crt-static", "-C", "relocation-model=static"]
 
 # aarch64 musl static build — the ARM counterpart of the x86_64 entry above.
 # Same generic ARMv8-A baseline as the aarch64 glibc target (see note there);
