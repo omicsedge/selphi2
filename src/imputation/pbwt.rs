@@ -1901,8 +1901,16 @@ impl CutRanking {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests pick the ranking per thread, so they do not depend on SELPHI_MC_SCORE or on each other.
+    static TEST_RANKING: std::cell::Cell<Option<CutRanking>> = const { std::cell::Cell::new(None) };
+}
+
 /// `SELPHI_MC_SCORE=count` restores the raw-count ranking; anything else is Idf.
 fn cut_ranking() -> CutRanking {
+    #[cfg(test)]
+    if let Some(r) = TEST_RANKING.with(|c| c.get()) { return r; }
     static R: std::sync::OnceLock<CutRanking> = std::sync::OnceLock::new();
     *R.get_or_init(|| if crate::config::raw("SELPHI_MC_SCORE").as_deref() == Some("count") { CutRanking::Count } else { CutRanking::Idf })
 }
@@ -2202,6 +2210,7 @@ fn legacy_build(
                         assert_eq!(got, want, "trial {trial} step {s} target {t}");
                     }
                 }
+                TEST_RANKING.with(|c| c.set(Some(CutRanking::Idf)));
                 for t in 0..n_haps {
                     for mc in [5usize, 50, 100_000] {
                         let a = select_candidates(&new, n_ref + t, n_ref, mc);
@@ -2240,10 +2249,8 @@ mod cut_ranking_tests {
 
     /// Haplotype 11 carries the target's alleles over the first half (ALT at sites 0-4, which no
     /// other haplotype carries) and differs from it over the second half, where haplotypes 0-10
-    /// match it. Counting shared steps ranks 11 last; cut to 5, the default ranking keeps it because
-    /// it alone shares the target's rare pattern.
-    #[test]
-    fn a_haplotype_sharing_a_rare_pattern_survives_the_cut() {
+    /// match it. Counting shared steps ranks 11 last; the rarity ranking keeps it.
+    fn fixture() -> (crate::common::HaplotypeBitmatrix, Vec<u8>, CodedSteps) {
         let (n_ref, n_var, n_haps) = (12usize, 20usize, 1usize);
         let alt = |site: usize, hap: usize| hap == 11 && !(5..10).contains(&site);
         let bm = crate::common::HaplotypeBitmatrix::from_panel(n_var, n_ref, &alt, &vec![true; n_var]);
@@ -2259,8 +2266,46 @@ mod cut_ranking_tests {
             for h in g { shared[h as usize] += 1; }
         }
         assert!(alone && shared[11] < shared[0], "the fixture must make 11 rare-but-few: {shared:?}");
-        let kept = select_candidates(&coded, n_ref, n_ref, 5);
-        assert_eq!(kept.len(), 5);
-        assert!(kept.contains(&11), "{kept:?}");
+        (bm, targ, coded)
+    }
+
+    fn with_ranking<T>(r: CutRanking, f: impl FnOnce() -> T) -> T {
+        TEST_RANKING.with(|c| c.set(Some(r)));
+        let out = f();
+        TEST_RANKING.with(|c| c.set(None));
+        out
+    }
+
+    #[test]
+    fn a_haplotype_sharing_a_rare_pattern_survives_the_cut() {
+        let (_, _, coded) = fixture();
+        let idf = with_ranking(CutRanking::Idf, || select_candidates(&coded, 12, 12, 5));
+        let count = with_ranking(CutRanking::Count, || select_candidates(&coded, 12, 12, 5));
+        assert_eq!((idf.len(), count.len()), (5, 5));
+        assert!(idf.contains(&11), "{idf:?}");
+        assert!(!count.contains(&11), "{count:?}");
+    }
+
+    /// The same through the no-call path: the target's call at site 7 is missing, so that step's
+    /// partners come from its called sites. The ranking must follow the setting there too.
+    #[test]
+    fn the_no_call_path_ranks_the_same_way() {
+        let (bm, targ, coded) = fixture();
+        let miss = vec![1u64 << 7];
+        let run = |r| with_ranking(r, || select_candidates_nocall(&coded, 12, 12, 5, &miss, &bm, 0, &targ, 1, 0));
+        let (idf, count) = (run(CutRanking::Idf), run(CutRanking::Count));
+        assert_eq!((idf.len(), count.len()), (5, 5));
+        assert!(idf.contains(&11), "{idf:?}");
+        assert!(!count.contains(&11), "{count:?}");
+    }
+
+    /// With room for every candidate, the ranking changes nothing.
+    #[test]
+    fn without_a_cut_both_rankings_keep_every_candidate() {
+        let (_, _, coded) = fixture();
+        let idf = with_ranking(CutRanking::Idf, || select_candidates(&coded, 12, 12, 100));
+        let count = with_ranking(CutRanking::Count, || select_candidates(&coded, 12, 12, 100));
+        assert_eq!(idf, count);
+        assert_eq!(idf, (0..12).collect::<Vec<u32>>());
     }
 }
