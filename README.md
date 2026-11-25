@@ -281,7 +281,7 @@ Sites typed in the input keep their calls and carry `GT` only; a missing call th
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="img/speed_dark.svg"/>
     <source media="(prefers-color-scheme: light)" srcset="img/speed_light.svg"/>
-    <img src="img/speed_light.svg" alt="Whole-genome phasing and imputation of 6 samples against a 75,552-haplotype panel on 16 threads: 11.5 min for Selphi 2 and 29.1 min for Beagle 5.5; peak memory 5.0 GB and 45.3 GB" width="720"/>
+    <img src="img/speed_light.svg" alt="Whole-genome phasing and imputation of 6 samples against a 75,552-haplotype panel on 16 threads: 11.7 min for Selphi 2 and 29.1 min for Beagle 5.5; peak memory 5.0 GB and 45.3 GB" width="720"/>
   </picture>
 </p>
 
